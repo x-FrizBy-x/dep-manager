@@ -77,7 +77,9 @@ export function OperationConsole({ ops }: { ops: Operations }) {
         <span className="font-medium">
           {KIND_LABEL[active.plan.kind]} {active.plan.package}
         </span>
-        <Badge tone={resultTone(rec?.result ?? 'running')}>{rec?.result ?? 'running'}</Badge>
+        <Badge tone={rec ? resultTone(rec.result) : ops.cancelling ? 'warning' : 'primary'}>
+          {rec?.result ?? (ops.cancelling ? 'cancelling…' : 'running')}
+        </Badge>
         {rec && rec.newVersion && rec.result === 'success' && (
           <span className="text-xs text-muted-foreground">now {rec.newVersion}</span>
         )}
@@ -87,12 +89,12 @@ export function OperationConsole({ ops }: { ops: Operations }) {
             <X className="size-4" />
           </Button>
         ) : (
-          <Button variant="outline" size="sm" onClick={() => void ops.cancelRun()}>
+          <Button variant="outline" size="sm" disabled={ops.cancelling} onClick={() => void ops.cancelRun()}>
             Cancel operation
           </Button>
         )}
       </header>
-      <pre ref={box} className="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs leading-5" role="log" aria-live="polite">
+      <pre ref={box} className="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs leading-5 break-all whitespace-pre-wrap" role="log" aria-live="polite">
         {active.lines.map((l, i) => (
           <div key={i} className={l.stream === 'stderr' ? 'text-warning' : l.stream === 'info' ? 'text-muted-foreground' : ''}>
             {l.line}

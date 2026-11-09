@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Search, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Plus, Search, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -76,6 +76,38 @@ function Detail({ p, onClose, ops }: { p: Pkg; onClose: () => void; ops: Operati
   )
 }
 
+function InstallForm({ ops }: { ops: Operations }) {
+  const [name, setName] = useState('')
+  const [version, setVersion] = useState('')
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const n = name.trim()
+    if (n) void ops.preview('npm', 'install', n, version.trim() || undefined)
+  }
+  return (
+    <form onSubmit={submit} className="flex items-center gap-2 border-b bg-card/50 px-3 py-2" aria-label="Install npm package">
+      <Plus className="size-4 text-muted-foreground" aria-hidden />
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Install global npm package (e.g. typescript)"
+        aria-label="npm package name"
+        className="h-8 min-w-48 flex-1 rounded-md border bg-background px-2 font-mono text-xs focus-visible:outline-2"
+      />
+      <input
+        value={version}
+        onChange={(e) => setVersion(e.target.value)}
+        placeholder="version (optional)"
+        aria-label="Version or tag"
+        className="h-8 w-36 rounded-md border bg-background px-2 font-mono text-xs focus-visible:outline-2"
+      />
+      <Button type="submit" size="sm" disabled={ops.busy || !name.trim()}>
+        Preview install
+      </Button>
+    </form>
+  )
+}
+
 function Th({ k, sort, onSort, children }: { k: SortKey; sort: { key: SortKey; dir: 'asc' | 'desc' }; onSort: (k: SortKey) => void; children: string }) {
   return (
     <th className="px-3 py-2 text-left font-medium" aria-sort={sort.key === k ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
@@ -104,6 +136,7 @@ export function Installed({ inv, ops }: { inv: Inventory; ops: Operations }) {
   if (inv.packages.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 p-16 text-center">
+        <InstallForm ops={ops} />
         <div className="font-medium">No packages yet</div>
         <p className="max-w-sm text-sm text-muted-foreground">
           Go to Overview and run a scan to build your software inventory.
@@ -115,6 +148,7 @@ export function Installed({ inv, ops }: { inv: Inventory; ops: Operations }) {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
+        <InstallForm ops={ops} />
         <div className="flex flex-wrap items-center gap-2 border-b p-3">
           <div className="relative min-w-48 flex-1">
             <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" aria-hidden />

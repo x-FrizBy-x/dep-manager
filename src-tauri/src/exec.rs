@@ -105,6 +105,49 @@ impl Runner for SystemRunner {
     }
 }
 
+/// Terminates the child *and everything it spawned*, then reaps it.
+///
+/// Killing only the direct child is not enough: package managers are wrappers
+/// (`npm.cmd` -> `node`, `apt` -> `dpkg`) and the real worker would keep
+/// running after the user was told the operation was cancelled.
+///
+/// * Unix: the child leads its own process group; send SIGTERM to the group,
+///   give it a grace period to clean up, then SIGKILL the group.
+/// * Windows: `taskkill /T /F` kills the tree.
+fn terminate_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let pgid = child.id() as libc::pid_t;
+        // SAFETY: plain signal syscalls on a process group we created.
+        unsafe {
+            libc::killpg(pgid, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // Also covers grandchildren that outlive a child that exited on SIGTERM.
+        unsafe {
+            libc::killpg(pgid, libc::SIGKILL);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(0x0800_0000)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
 /// Callback receiving each output line: `(stream, line)` where stream is
 /// `"stdout"` or `"stderr"`.
 pub type LineSink<'a> = &'a (dyn Fn(&'static str, &str) + Sync);
@@ -117,7 +160,7 @@ pub struct StreamResult {
 }
 
 /// Runs a program (no shell, argument array) and streams its output line by
-/// line. Honors `cancel` and `timeout` by killing the direct child process.
+/// line. Honors `cancel` and `timeout` by terminating the whole process tree.
 pub fn run_streaming(
     program: &str,
     args: &[&str],
@@ -138,6 +181,12 @@ pub fn run_streaming(
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
+    }
+    // Unix: run in a new process group so cancellation can signal the whole tree.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
     }
     let mut child = cmd.spawn().map_err(|e| AppError::Spawn(format!("{program}: {e}")))?;
 
@@ -182,13 +231,13 @@ pub fn run_streaming(
             break;
         }
         if cancel.load(Ordering::Acquire) {
-            let _ = child.kill();
+            terminate_tree(&mut child);
             let _ = child.wait();
             res.cancelled = true;
             break;
         }
         if start.elapsed() > timeout {
-            let _ = child.kill();
+            terminate_tree(&mut child);
             let _ = child.wait();
             res.timed_out = true;
             break;
@@ -220,6 +269,26 @@ mod stream_tests {
         let r = run_streaming("cargo", &["--definitely-not-a-flag"], Duration::from_secs(30), &cancel, &|_, _| {}).unwrap();
         assert_ne!(r.status, Some(0));
         assert!(run_streaming("no-such-program-xyz", &[], Duration::from_secs(1), &cancel, &|_, _| {}).is_err());
+    }
+
+    /// Unix-only: a grandchild must not survive cancellation.
+    #[cfg(unix)]
+    #[test]
+    fn cancel_kills_grandchildren() {
+        use std::sync::Arc;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let c2 = cancel.clone();
+        let marker = std::env::temp_dir().join(format!("unimanage-gc-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let script = format!("(sleep 3; touch {}) & wait", marker.display());
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            c2.store(true, Ordering::Release);
+        });
+        let r = run_streaming("sh", &["-c", &script], Duration::from_secs(30), &cancel, &|_, _| {}).unwrap();
+        assert!(r.cancelled);
+        std::thread::sleep(Duration::from_millis(4000));
+        assert!(!marker.exists(), "grandchild survived cancellation");
     }
 
     #[test]

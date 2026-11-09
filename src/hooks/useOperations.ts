@@ -19,6 +19,8 @@ export interface Operations {
   active: ActiveOp | null
   /** True while a preview request or an operation is in flight. */
   busy: boolean
+  /** Cancel was requested; waiting for the process to stop and the inventory to refresh. */
+  cancelling: boolean
   error: string | null
   preview: (managerId: string, kind: OpKind, pkg: string, version?: string) => Promise<void>
   /** Runs the currently previewed plan. Only called from the confirm button. */
@@ -33,6 +35,7 @@ export function useOperations(onFinished: () => void): Operations {
   const [active, setActive] = useState<ActiveOp | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [cancelling, setCancelling] = useState(false)
   const finished = useRef(onFinished)
   useEffect(() => {
     finished.current = onFinished
@@ -76,6 +79,7 @@ export function useOperations(onFinished: () => void): Operations {
     const p = plan
     setPlan(null)
     setError(null)
+    setCancelling(false)
     setActive({ plan: p, operationId: null, lines: [], record: null })
     try {
       const record = await api.runOperation(p.id)
@@ -89,6 +93,7 @@ export function useOperations(onFinished: () => void): Operations {
   }, [plan])
 
   const cancelRun = useCallback(async () => {
+    setCancelling(true)
     try {
       await api.cancelOperation()
     } catch (e) {
@@ -99,6 +104,7 @@ export function useOperations(onFinished: () => void): Operations {
   return {
     plan,
     active,
+    cancelling,
     busy: previewing || (active !== null && active.record === null),
     error,
     preview,
