@@ -60,6 +60,60 @@ export function ConfirmDialog({ ops }: { ops: Operations }) {
   )
 }
 
+/** Review of a multi-package update. Nothing runs until "Run N updates" is pressed. */
+export function BatchDialog({ ops }: { ops: Operations }) {
+  const batch = ops.batch
+  const ref = useRef<HTMLButtonElement>(null)
+  const open = batch?.phase === 'review'
+  useEffect(() => {
+    if (open) ref.current?.focus()
+  }, [open])
+  if (!batch || batch.phase !== 'review') return null
+  const warnings = [...new Set(batch.plans.flatMap((p) => p.warnings))]
+  const n = batch.plans.length
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onKeyDown={(e) => e.key === 'Escape' && ops.discardBatch()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="batch-title" className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border bg-card p-5 shadow-xl">
+        <h2 id="batch-title" className="text-lg font-semibold">
+          Run {n} update{n === 1 ? '' : 's'}?
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          They run one at a time, in this order. A failure does not stop the rest; Cancel stops the batch.
+        </p>
+        <ul className="mt-3 min-h-0 flex-1 space-y-2 overflow-auto">
+          {batch.plans.map((p) => (
+            <li key={p.id} className="rounded-md border p-2 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium break-all">{p.package}</span>
+                <span className="font-mono text-xs whitespace-nowrap">
+                  {p.previousVersion ?? '?'} → {p.version ?? 'latest'}
+                </span>
+              </div>
+              <pre className="mt-1 overflow-x-auto font-mono text-xs text-muted-foreground">{p.command}</pre>
+              {p.requiresElevation && <Badge tone="warning">needs elevation</Badge>}
+            </li>
+          ))}
+        </ul>
+        {warnings.length > 0 && (
+          <ul className="mt-3 list-disc space-y-1 rounded-md bg-warning/10 p-2 pl-6 text-xs">
+            {warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button ref={ref} variant="outline" onClick={ops.discardBatch}>
+            Cancel
+          </Button>
+          <Button onClick={() => void ops.confirmBatch()}>
+            Run {n} update{n === 1 ? '' : 's'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Terminal-style live output for the running / last operation. */
 export function OperationConsole({ ops }: { ops: Operations }) {
   const { active } = ops

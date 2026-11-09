@@ -12,20 +12,21 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { ConfirmDialog, OperationConsole } from '@/components/OperationUI'
+import { BatchDialog, ConfirmDialog, OperationConsole } from '@/components/OperationUI'
 import { useInventory } from '@/hooks/useInventory'
 import { useOperations } from '@/hooks/useOperations'
 import { cn } from '@/lib/utils'
 import { History as HistoryPage } from '@/pages/History'
 import { Installed } from '@/pages/Installed'
 import { Overview } from '@/pages/Overview'
+import { Updates } from '@/pages/Updates'
 
 type PageId = 'overview' | 'installed' | 'updates' | 'explorer' | 'graph' | 'backup' | 'history' | 'settings'
 
 const NAV: { id: PageId; label: string; icon: LucideIcon; ready: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, ready: true },
   { id: 'installed', label: 'Installed Software', icon: Boxes, ready: true },
-  { id: 'updates', label: 'Updates', icon: Download, ready: false },
+  { id: 'updates', label: 'Updates', icon: Download, ready: true },
   { id: 'explorer', label: 'Package Explorer', icon: PackageSearch, ready: false },
   { id: 'graph', label: 'Dependency Graph', icon: GitFork, ready: false },
   { id: 'backup', label: 'Environment Backup', icon: Boxes, ready: false },
@@ -104,6 +105,8 @@ export default function App() {
             <div className="p-8 text-sm text-muted-foreground" role="status">Loading…</div>
           ) : page === 'installed' ? (
             <Installed inv={inv} ops={ops} />
+          ) : page === 'updates' ? (
+            <Updates inv={inv} ops={ops} />
           ) : page === 'history' ? (
             <HistoryPage refreshKey={ops.active?.record?.id ?? null} />
           ) : (
@@ -113,6 +116,7 @@ export default function App() {
         <OperationConsole ops={ops} />
       </main>
       <ConfirmDialog ops={ops} />
+      <BatchDialog ops={ops} />
     </div>
   )
 }
