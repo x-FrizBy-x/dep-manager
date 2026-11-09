@@ -137,21 +137,36 @@ impl Db {
             params![info.id, info.display_name, info.detected, info.path, info.version, info.supports_updates, info.last_error, ts],
         )?;
         let replace = packages.is_some() || !info.detected;
+        // Remember when each package was first seen so a rescan doesn't reset it.
+        let mut first_seen: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
         if replace {
+            let mut st = tx.prepare("SELECT id, first_seen_at FROM installed_packages WHERE manager_id = ?")?;
+            let rows = st.query_map([&info.id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            for row in rows {
+                let (id, t) = row?;
+                first_seen.insert(id, t);
+            }
+            drop(st);
             tx.execute("DELETE FROM installed_packages WHERE manager_id = ?", [&info.id])?;
         }
+        let mut seen_ids = std::collections::HashSet::new();
         for p in packages.unwrap_or(&[]) {
+            // A parser emitting the same id twice must not fail the whole manager.
+            if !seen_ids.insert(p.id.as_str()) {
+                continue;
+            }
+            let first = first_seen.get(&p.id).copied().unwrap_or(ts);
             tx.execute(
                 "INSERT INTO installed_packages (id, manager_id, name, display_name, version, latest_version, description,
                    category, kind, installation_source, installation_path, architecture, installed_date, update_available,
                    update_status, management_status, homepage, license, first_seen_at, last_seen_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?19)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?20,?19)
                  ON CONFLICT(id) DO UPDATE SET last_seen_at=?19",
                 params![
                     p.id, p.package_manager, p.name, p.display_name, p.version, p.latest_version, p.description,
                     p.category, enum_str(&p.kind), p.installation_source, p.installation_path, p.architecture,
                     p.installed_date, p.update_available, enum_str(&p.update_status), enum_str(&p.management_status),
-                    p.homepage, p.license, ts
+                    p.homepage, p.license, ts, first
                 ],
             )?;
             for (k, v) in &p.metadata {
@@ -380,6 +395,22 @@ mod tests {
             package_count: 0,
             last_error: None,
         }
+    }
+
+    #[test]
+    fn rescan_keeps_first_seen_and_tolerates_duplicate_ids() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = Package::new("npm", "npm:a".into(), "a");
+        p.version = Some("1".into());
+        let dup = p.clone();
+        db.save_manager(&info("npm"), Some(&[p.clone(), dup])).unwrap();
+        db.conn.execute("UPDATE installed_packages SET first_seen_at = 100", []).unwrap();
+        p.version = Some("2".into());
+        db.save_manager(&info("npm"), Some(&[p])).unwrap();
+        let first: i64 = db.conn.query_row("SELECT first_seen_at FROM installed_packages", [], |r| r.get(0)).unwrap();
+        assert_eq!(first, 100);
+        assert_eq!(db.list_packages().unwrap().len(), 1);
+        assert_eq!(db.list_packages().unwrap()[0].version.as_deref(), Some("2"));
     }
 
     #[test]

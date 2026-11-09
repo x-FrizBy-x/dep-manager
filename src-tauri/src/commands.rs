@@ -15,6 +15,14 @@ fn with_db<T>(state: &AppState, f: impl FnOnce(&crate::db::Db) -> Result<T>) -> 
     f(&db)
 }
 
+/// Clears a busy flag when dropped, including during unwinding.
+struct FlagReset(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for FlagReset {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 #[tauri::command]
 pub async fn start_scan(app: AppHandle, state: State<'_, AppState>, check_updates: Option<bool>) -> Result<ScanRecord> {
     if state.scanning.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
@@ -28,11 +36,11 @@ pub async fn start_scan(app: AppHandle, state: State<'_, AppState>, check_update
     let res = tauri::async_runtime::spawn_blocking(move || {
         let adapters = adapters::all();
         let runner = SystemRunner::default();
-        let out = scanner::scan_all(&adapters, &runner, &db, check_updates.unwrap_or(true), &|p| {
+        // Resets the flag even if scanning panics.
+        let _reset = FlagReset(flag);
+        scanner::scan_all(&adapters, &runner, &db, check_updates.unwrap_or(true), &|p| {
             let _ = app.emit("scan-progress", p);
-        });
-        flag.store(false, Ordering::Release);
-        out
+        })
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?;
@@ -114,6 +122,7 @@ pub async fn run_operation(app: AppHandle, state: State<'_, AppState>, plan_id: 
 
     let (db, running, cancel) = (state.db.clone(), state.op_running.clone(), state.cancel.clone());
     let res = tauri::async_runtime::spawn_blocking(move || {
+        let _reset = FlagReset(running);
         let (a1, a2) = (app.clone(), app.clone());
         let out = ops::execute(
             &plan,
@@ -131,7 +140,7 @@ pub async fn run_operation(app: AppHandle, state: State<'_, AppState>, plan_id: 
             },
             &|| rescan_manager(&db, &plan),
         );
-        running.store(false, Ordering::Release);
+        drop(_reset);
         if let Ok(rec) = &out {
             let _ = app.emit("operation-finished", rec);
         }
