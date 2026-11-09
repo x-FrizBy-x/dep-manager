@@ -112,3 +112,48 @@ pub struct ManagerInfo {
     pub package_count: u32,
     pub last_error: Option<String>,
 }
+
+/// One row from a package manager's search. Only what the manager reported.
+#[derive(Debug, Clone)]
+pub struct SearchHit {
+    pub name: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Search result as sent to the UI, annotated with local installed state.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    pub manager_id: String,
+    pub name: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub installed: bool,
+    pub installed_version: Option<String>,
+    /// Whether UniManage can install this through its operation pipeline.
+    pub can_install: bool,
+}
+
+/// Registry/repository details for a package (installed or not).
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageDetails {
+    pub manager_id: String,
+    pub name: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub homepage: Option<String>,
+    pub license: Option<String>,
+    pub dependencies: Vec<String>,
+    pub metadata: std::collections::BTreeMap<String, String>,
+}
+
+/// A manager that can be searched, for the Package Explorer's picker.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchManager {
+    pub id: String,
+    pub display_name: String,
+    pub can_install: bool,
+}

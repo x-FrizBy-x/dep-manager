@@ -5,7 +5,7 @@
 
 use crate::error::{AppError, Result};
 use crate::exec::Runner;
-use crate::model::{Package, UpdateInfo};
+use crate::model::{Package, PackageDetails, SearchHit, UpdateInfo};
 use std::path::PathBuf;
 
 pub mod apt;
@@ -36,6 +36,46 @@ pub trait Adapter: Send + Sync {
     fn check_updates(&self, _r: &dyn Runner) -> Result<Vec<UpdateInfo>> {
         Err(AppError::Unsupported(format!("{} does not report updates natively", self.display_name())))
     }
+
+    /// Whether `search` and `details` are implemented for this manager.
+    fn supports_search(&self) -> bool {
+        false
+    }
+    /// Searches the manager's registry/repositories. `query` has already been
+    /// validated with [`validate_query`].
+    fn search(&self, _r: &dyn Runner, _query: &str, _limit: usize) -> Result<Vec<SearchHit>> {
+        Err(AppError::Unsupported(format!("{} search is not implemented", self.display_name())))
+    }
+    /// Details for one package. `name` is validated by the implementation.
+    fn details(&self, _r: &dyn Runner, _name: &str) -> Result<PackageDetails> {
+        Err(AppError::Unsupported(format!("{} package details are not implemented", self.display_name())))
+    }
+}
+
+/// Validates a user search query before it reaches a command line.
+/// Returns the whitespace-separated terms. Only a conservative character set
+/// is allowed and no term may start with `-`, so a query can never be parsed
+/// as an option, and nothing is interpreted by a shell or batch file.
+pub fn validate_query(query: &str) -> Result<Vec<String>> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Err(AppError::Other("enter something to search for".into()));
+    }
+    if q.len() > 64 {
+        return Err(AppError::Other("search text is too long (max 64 characters)".into()));
+    }
+    let ok = |c: char| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '_' | '-' | '@' | '/' | ':' | '+');
+    if let Some(bad) = q.chars().find(|c| !ok(*c)) {
+        return Err(AppError::Other(format!("character `{bad}` is not allowed in a search")));
+    }
+    let terms: Vec<String> = q.split_whitespace().map(String::from).collect();
+    if terms.len() > 5 {
+        return Err(AppError::Other("at most 5 search terms".into()));
+    }
+    if terms.iter().any(|t| t.starts_with('-')) {
+        return Err(AppError::Other("search terms must not start with `-`".into()));
+    }
+    Ok(terms)
 }
 
 pub fn all() -> Vec<Box<dyn Adapter>> {
@@ -60,4 +100,24 @@ pub(crate) fn first_line(s: &str) -> String {
 pub(crate) fn non_empty(s: &str) -> Option<String> {
     let t = s.trim();
     (!t.is_empty() && t != "-").then(|| t.to_string())
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::validate_query;
+
+    #[test]
+    fn accepts_normal_queries() {
+        assert_eq!(validate_query("  is odd ").unwrap(), vec!["is", "odd"]);
+        assert!(validate_query("@scope/pkg").is_ok());
+        assert!(validate_query("g++").is_ok());
+    }
+
+    #[test]
+    fn rejects_dangerous_or_option_like_queries() {
+        for bad in ["", "   ", "--registry=x", "a -b", "a;b", "a&b", "a|b", "$(x)", "a%PATH%", "a\nb", "a`b", "a\"b", "a b c d e f"] {
+            assert!(validate_query(bad).is_err(), "{bad:?}");
+        }
+        assert!(validate_query(&"a".repeat(65)).is_err());
+    }
 }

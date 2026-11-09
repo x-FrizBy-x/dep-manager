@@ -17,6 +17,7 @@ import { useInventory } from '@/hooks/useInventory'
 import { useOperations } from '@/hooks/useOperations'
 import { cn } from '@/lib/utils'
 import { History as HistoryPage } from '@/pages/History'
+import { Explorer } from '@/pages/Explorer'
 import { Installed } from '@/pages/Installed'
 import { Overview } from '@/pages/Overview'
 import { Updates } from '@/pages/Updates'
@@ -27,7 +28,7 @@ const NAV: { id: PageId; label: string; icon: LucideIcon; ready: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, ready: true },
   { id: 'installed', label: 'Installed Software', icon: Boxes, ready: true },
   { id: 'updates', label: 'Updates', icon: Download, ready: true },
-  { id: 'explorer', label: 'Package Explorer', icon: PackageSearch, ready: false },
+  { id: 'explorer', label: 'Package Explorer', icon: PackageSearch, ready: true },
   { id: 'graph', label: 'Dependency Graph', icon: GitFork, ready: false },
   { id: 'backup', label: 'Environment Backup', icon: Boxes, ready: false },
   { id: 'history', label: 'Operation History', icon: History, ready: true },
@@ -105,6 +106,8 @@ export default function App() {
             <div className="p-8 text-sm text-muted-foreground" role="status">Loading…</div>
           ) : page === 'installed' ? (
             <Installed inv={inv} ops={ops} />
+          ) : page === 'explorer' ? (
+            <Explorer ops={ops} onInstalledChange={ops.batch?.phase ?? ops.active?.record?.id ?? null} />
           ) : page === 'updates' ? (
             <Updates inv={inv} ops={ops} />
           ) : page === 'history' ? (

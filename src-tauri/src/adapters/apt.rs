@@ -1,7 +1,7 @@
 use super::{first_line, non_empty, Adapter};
 use crate::error::Result;
 use crate::exec::Runner;
-use crate::model::{Package, PackageKind, UpdateInfo};
+use crate::model::{Package, PackageDetails, PackageKind, SearchHit, UpdateInfo};
 use std::collections::HashSet;
 
 pub struct Apt;
@@ -45,6 +45,102 @@ impl Adapter for Apt {
         let out = r.run("apt", &["list", "--upgradable"])?.ok()?;
         Ok(parse_upgradable(&out.stdout))
     }
+
+    fn supports_search(&self) -> bool {
+        true
+    }
+
+    fn search(&self, r: &dyn Runner, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        let terms = super::validate_query(query)?;
+        let mut args: Vec<&str> = vec!["search", "--names-only"];
+        args.extend(terms.iter().map(String::as_str));
+        // apt-cache exits 0 with no output when nothing matches.
+        let out = r.run("apt-cache", &args)?.ok()?;
+        let mut hits = parse_search(&out.stdout);
+        hits.truncate(limit.clamp(1, 50));
+        Ok(hits)
+    }
+
+    fn details(&self, r: &dyn Runner, name: &str) -> Result<PackageDetails> {
+        validate_apt_name(name)?;
+        let out = r.run("apt-cache", &["show", name])?.ok()?;
+        parse_show(&out.stdout)
+    }
+}
+
+/// Debian package names: lowercase alphanumerics and `+ - .`, starting with an
+/// alphanumeric, at least two characters.
+pub(crate) fn validate_apt_name(name: &str) -> Result<()> {
+    let ok = name.len() >= 2
+        && name.len() <= 100
+        && name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '-' | '.'));
+    if ok {
+        Ok(())
+    } else {
+        Err(crate::error::AppError::Other(format!("invalid apt package name `{name}`")))
+    }
+}
+
+/// `apt-cache search --names-only`: one `name - short description` per line.
+pub(crate) fn parse_search(stdout: &str) -> Vec<SearchHit> {
+    stdout
+        .lines()
+        .filter_map(|l| {
+            let (name, desc) = l.split_once(" - ").map(|(a, b)| (a, Some(b))).unwrap_or((l.trim(), None));
+            let name = name.trim();
+            (!name.is_empty()).then(|| SearchHit {
+                name: name.to_string(),
+                version: None,
+                description: desc.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()),
+            })
+        })
+        .collect()
+}
+
+/// `apt-cache show <pkg>`: deb822 stanzas separated by blank lines. The first
+/// stanza is the candidate version; later ones (e.g. the installed copy) are ignored.
+pub(crate) fn parse_show(stdout: &str) -> Result<PackageDetails> {
+    let stanza = stdout.split("\n\n").find(|s| !s.trim().is_empty()).unwrap_or("");
+    let mut fields: Vec<(String, String)> = Vec::new();
+    for line in stanza.lines() {
+        if line.starts_with([' ', '\t']) {
+            if let Some((_, v)) = fields.last_mut() {
+                if line.trim() != "." {
+                    v.push(' ');
+                    v.push_str(line.trim());
+                } else {
+                    v.push(' ');
+                }
+            }
+        } else if let Some((k, v)) = line.split_once(':') {
+            fields.push((k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    let get = |k: &str| fields.iter().find(|(f, _)| f == k).map(|(_, v)| v.clone()).filter(|v| !v.is_empty());
+    let name = get("Package").ok_or_else(|| crate::error::AppError::Parse("apt-cache show: no Package field".into()))?;
+    // `Description` or a translated `Description-xx`.
+    let description = fields
+        .iter()
+        .find(|(k, _)| k == "Description" || k.starts_with("Description-") && k != "Description-md5")
+        .map(|(_, v)| v.trim().to_string());
+    let mut d = PackageDetails {
+        manager_id: "apt".into(),
+        name,
+        version: get("Version"),
+        description,
+        homepage: get("Homepage"),
+        ..Default::default()
+    };
+    if let Some(dep) = get("Depends") {
+        d.dependencies = dep.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
+    }
+    for key in ["Section", "Priority", "Architecture", "Installed-Size"] {
+        if let Some(v) = get(key) {
+            d.metadata.insert(key.to_lowercase(), v);
+        }
+    }
+    Ok(d)
 }
 
 pub(crate) fn parse_dpkg(stdout: &str, manual: &HashSet<String>, have_manual: bool) -> Vec<Package> {
@@ -122,5 +218,50 @@ mod tests {
     fn version_via_runner() {
         let r = FakeRunner::new(&["apt"]).on("apt --version", 0, "apt 2.7.14 (amd64)\n");
         assert_eq!(Apt.version(&r).unwrap(), "apt 2.7.14 (amd64)");
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    /// Real output from Ubuntu (WSL), trimmed.
+    const SHOW: &str = "Package: curl\nPriority: optional\nSection: web\nInstalled-Size: 512\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 8.18.0-1ubuntu2.8\nDepends: libcurl4t64 (= 8.18.0-1ubuntu2.8), libc6 (>= 2.34), zlib1g (>= 1:1.1.4)\nHomepage: https://curl.se/\nDescription-en: command line tool for transferring data with URL syntax\n curl is a command line tool for transferring data.\n .\n curl supports SSL certificates.\nDescription-md5: f83293d1\n\nPackage: curl\nStatus: install ok installed\nVersion: 1.0\n";
+
+    #[test]
+    fn parses_search_lines() {
+        let h = parse_search("curl - command line tool for transferring data with URL syntax\ncurlftpfs - filesystem to access FTP hosts based on FUSE and cURL\n");
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[0].name, "curl");
+        assert!(h[1].description.as_deref().unwrap().starts_with("filesystem"));
+        assert!(parse_search("").is_empty());
+    }
+
+    #[test]
+    fn parses_show_first_stanza() {
+        let d = parse_show(SHOW).unwrap();
+        assert_eq!((d.name.as_str(), d.version.as_deref()), ("curl", Some("8.18.0-1ubuntu2.8")));
+        assert_eq!(d.homepage.as_deref(), Some("https://curl.se/"));
+        assert_eq!(d.dependencies.len(), 3);
+        assert!(d.description.as_deref().unwrap().starts_with("command line tool"));
+        assert!(d.description.as_deref().unwrap().contains("SSL certificates"));
+        assert_eq!(d.metadata["section"], "web");
+        assert!(!d.metadata.contains_key("maintainer"));
+        assert!(parse_show("").is_err());
+    }
+
+    #[test]
+    fn validates_names_and_queries() {
+        for ok in ["curl", "g++", "libc6", "python3.12"] {
+            assert!(validate_apt_name(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "a", "-x", "Curl", "a b", "a;b", "curl:amd64", "../x"] {
+            assert!(validate_apt_name(bad).is_err(), "{bad}");
+        }
+        use crate::exec::fake::FakeRunner;
+        let r = FakeRunner::new(&["apt-cache"]);
+        assert!(Apt.search(&r, "--version", 5).is_err());
+        let r = FakeRunner::new(&["apt-cache"]).on("apt-cache search --names-only curl", 0, "curl - x\n");
+        assert_eq!(Apt.search(&r, "curl", 5).unwrap().len(), 1);
     }
 }

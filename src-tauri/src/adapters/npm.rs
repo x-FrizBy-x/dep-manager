@@ -1,7 +1,7 @@
 use super::{first_line, Adapter};
 use crate::error::{AppError, Result};
 use crate::exec::Runner;
-use crate::model::{Package, PackageKind, UpdateInfo};
+use crate::model::{Package, PackageDetails, PackageKind, SearchHit, UpdateInfo};
 use serde_json::Value;
 
 /// Global npm packages only. Project-level dependencies are deliberately
@@ -42,6 +42,93 @@ impl Adapter for Npm {
         }
         parse_outdated(&out.stdout)
     }
+
+    fn supports_search(&self) -> bool {
+        true
+    }
+
+    fn search(&self, r: &dyn Runner, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        let terms = super::validate_query(query)?;
+        let limit_arg = format!("--searchlimit={}", limit.clamp(1, 50));
+        let mut args: Vec<&str> = vec!["search", "--json", &limit_arg];
+        args.extend(terms.iter().map(String::as_str));
+        let out = r.run("npm", &args)?.ok()?;
+        parse_search(&out.stdout)
+    }
+
+    fn details(&self, r: &dyn Runner, name: &str) -> Result<PackageDetails> {
+        crate::ops::validate_npm_name(name)?;
+        let out = r.run("npm", &["view", name, "--json"])?.ok()?;
+        parse_view(&out.stdout)
+    }
+}
+
+/// `npm search --json`: an array of `{name, version, description, ...}`.
+pub(crate) fn parse_search(stdout: &str) -> Result<Vec<SearchHit>> {
+    if stdout.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let v: Value = serde_json::from_str(stdout)?;
+    let arr = v.as_array().ok_or_else(|| AppError::Parse("npm search: expected array".into()))?;
+    Ok(arr
+        .iter()
+        .filter_map(|e| {
+            Some(SearchHit {
+                name: e.get("name")?.as_str()?.to_string(),
+                version: e.get("version").and_then(Value::as_str).map(String::from),
+                description: e.get("description").and_then(Value::as_str).filter(|d| !d.is_empty()).map(String::from),
+            })
+        })
+        .collect())
+}
+
+/// `npm view <pkg> --json`: an object (npm <=10) or an array of objects (npm 12).
+/// Maintainer e-mail addresses are deliberately dropped.
+pub(crate) fn parse_view(stdout: &str) -> Result<PackageDetails> {
+    let v: Value = serde_json::from_str(stdout)?;
+    let e = match &v {
+        Value::Array(a) => a.last().ok_or_else(|| AppError::Parse("npm view: empty result".into()))?,
+        o => o,
+    };
+    let s = |k: &str| e.get(k).and_then(Value::as_str).map(String::from);
+    let mut d = PackageDetails {
+        manager_id: "npm".into(),
+        name: s("name").ok_or_else(|| AppError::Parse("npm view: no name".into()))?,
+        version: s("version"),
+        description: s("description"),
+        homepage: s("homepage"),
+        license: s("license"),
+        ..Default::default()
+    };
+    if let Some(deps) = e.get("dependencies").and_then(Value::as_object) {
+        d.dependencies = deps.iter().map(|(k, v)| format!("{k} {}", v.as_str().unwrap_or(""))).map(|x| x.trim().to_string()).collect();
+    }
+    if let Some(m) = e.get("maintainers").and_then(Value::as_array) {
+        let names: Vec<String> = m
+            .iter()
+            .filter_map(|x| match x {
+                Value::String(s) => Some(s.split('<').next().unwrap_or("").trim().to_string()),
+                o => o.get("name").or_else(|| o.get("username")).and_then(Value::as_str).map(String::from),
+            })
+            .filter(|n| !n.is_empty())
+            .collect();
+        if !names.is_empty() {
+            d.metadata.insert("maintainers".into(), names.join(", "));
+        }
+    }
+    if let Some(k) = e.get("keywords").and_then(Value::as_array) {
+        let ks: Vec<&str> = k.iter().filter_map(Value::as_str).collect();
+        if !ks.is_empty() {
+            d.metadata.insert("keywords".into(), ks.join(", "));
+        }
+    }
+    if let Some(u) = e.get("repository").and_then(|r| r.get("url")).and_then(Value::as_str) {
+        d.metadata.insert("repository".into(), u.to_string());
+    }
+    if let Some(t) = e.get("time").and_then(|t| t.get("modified")).and_then(Value::as_str) {
+        d.metadata.insert("lastPublished".into(), t.to_string());
+    }
+    Ok(d)
 }
 
 pub(crate) fn parse_ls(stdout: &str, root: Option<&str>) -> Result<Vec<Package>> {
@@ -103,6 +190,38 @@ mod tests {
         let out = r#"{"npm":{"current":"12.1.0","wanted":"12.2.2","latest":"12.2.2","dependent":"global","location":"C:\\Users\\x\\npm"}}"#;
         let u = parse_outdated(out).unwrap();
         assert_eq!(u[0].latest_version, "12.2.2");
+    }
+
+    /// Shapes captured from npm 12.1 (`npm search --json`, `npm view --json`).
+    #[test]
+    fn parses_real_search_and_view() {
+        let search = "[\n\n{\"name\":\"is-odd\",\"version\":\"3.0.1\",\"description\":\"Returns true if odd\",\"publisher\":{\"email\":\"x@y.z\",\"username\":\"jon\"}}\n\n,\n\n{\"name\":\"is-odd-ai\",\"version\":\"1.0.2\",\"description\":\"\"}\n]";
+        let hits = parse_search(search).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].name, "is-odd");
+        assert_eq!(hits[0].version.as_deref(), Some("3.0.1"));
+        assert_eq!(hits[1].description, None);
+        assert!(parse_search("").unwrap().is_empty());
+
+        let view = r#"[{"name":"is-odd","version":"3.0.1","description":"d","license":"MIT","homepage":"https://h","dependencies":{"is-number":"^6.0.0"},"maintainers":["doowb <brian@x.com>","jon <j@x.com>"],"keywords":["odd","math"],"repository":{"url":"git+https://g"},"time":{"modified":"2026-04-14"}}]"#;
+        let d = parse_view(view).unwrap();
+        assert_eq!((d.name.as_str(), d.version.as_deref(), d.license.as_deref()), ("is-odd", Some("3.0.1"), Some("MIT")));
+        assert_eq!(d.dependencies, vec!["is-number ^6.0.0"]);
+        assert_eq!(d.metadata["maintainers"], "doowb, jon");
+        assert!(!d.metadata.values().any(|v| v.contains('@') && v.contains("x.com")), "emails must not leak");
+        // npm <= 10 returns a bare object
+        assert!(parse_view(r#"{"name":"a","version":"1.0.0"}"#).is_ok());
+        assert!(parse_view("[]").is_err());
+    }
+
+    #[test]
+    fn search_and_details_validate_input() {
+        use crate::exec::fake::FakeRunner;
+        let r = FakeRunner::new(&["npm"]);
+        assert!(Npm.search(&r, "--registry=x", 10).is_err());
+        assert!(Npm.details(&r, "bad name").is_err());
+        let r = FakeRunner::new(&["npm"]).on("npm search --json --searchlimit=10 is odd", 0, "[]");
+        assert!(Npm.search(&r, "is odd", 10).unwrap().is_empty());
     }
 
     #[test]

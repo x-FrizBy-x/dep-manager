@@ -107,3 +107,30 @@ export interface OperationLogLine {
 export interface OperationLogEvent extends OperationLogLine {
   operationId: number
 }
+
+export interface SearchManager {
+  id: string
+  displayName: string
+  canInstall: boolean
+}
+
+export interface SearchResult {
+  managerId: string
+  name: string
+  version: string | null
+  description: string | null
+  installed: boolean
+  installedVersion: string | null
+  canInstall: boolean
+}
+
+export interface PackageDetails {
+  managerId: string
+  name: string
+  version: string | null
+  description: string | null
+  homepage: string | null
+  license: string | null
+  dependencies: string[]
+  metadata: Record<string, string>
+}

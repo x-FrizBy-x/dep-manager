@@ -4,7 +4,7 @@
 use crate::db::{OperationLogLine, OperationRecord, ScanRecord};
 use crate::error::{AppError, Result};
 use crate::exec::SystemRunner;
-use crate::model::{ManagerInfo, Package};
+use crate::model::{ManagerInfo, Package, PackageDetails, SearchManager, SearchResult};
 use crate::ops::{self, OpKind, OperationPlan};
 use crate::{adapters, scanner, AppState};
 use std::sync::atomic::Ordering;
@@ -176,4 +176,68 @@ pub fn get_operations(state: State<'_, AppState>, limit: Option<u32>) -> Result<
 #[tauri::command]
 pub fn get_operation_logs(state: State<'_, AppState>, operation_id: i64) -> Result<Vec<OperationLogLine>> {
     with_db(&state, |d| d.operation_logs(operation_id))
+}
+
+// ---- package explorer -----------------------------------------------------
+
+/// Managers that can be searched and are present on this machine.
+#[tauri::command]
+pub fn get_search_managers() -> Vec<SearchManager> {
+    let runner = SystemRunner::default();
+    adapters::all()
+        .iter()
+        .filter(|a| a.supports_search() && a.detect(&runner).is_some())
+        .map(|a| SearchManager {
+            id: a.id().into(),
+            display_name: a.display_name().into(),
+            can_install: ops::supports_operations(a.id()),
+        })
+        .collect()
+}
+
+fn adapter_for(manager_id: &str) -> Result<Box<dyn adapters::Adapter>> {
+    adapters::all()
+        .into_iter()
+        .find(|a| a.id() == manager_id && a.supports_search())
+        .ok_or_else(|| AppError::Unsupported(format!("{manager_id}: search is not implemented")))
+}
+
+#[tauri::command]
+pub async fn search_packages(
+    state: State<'_, AppState>,
+    manager_id: String,
+    query: String,
+) -> Result<Vec<SearchResult>> {
+    let installed = with_db(&state, |d| d.list_packages())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let adapter = adapter_for(&manager_id)?;
+        let hits = adapter.search(&SystemRunner::default(), &query, 25)?;
+        let can_install = ops::supports_operations(&manager_id);
+        Ok(hits
+            .into_iter()
+            .map(|h| {
+                let local = installed.iter().find(|p| p.package_manager == manager_id && p.name == h.name);
+                SearchResult {
+                    manager_id: manager_id.clone(),
+                    installed: local.is_some(),
+                    installed_version: local.and_then(|p| p.version.clone()),
+                    name: h.name,
+                    version: h.version,
+                    description: h.description,
+                    can_install,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn get_package_details(manager_id: String, name: String) -> Result<PackageDetails> {
+    tauri::async_runtime::spawn_blocking(move || {
+        adapter_for(&manager_id)?.details(&SystemRunner::default(), &name)
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
 }

@@ -7,9 +7,12 @@ import type {
   OperationPlan,
   OperationRecord,
   OpKind,
+  PackageDetails,
   Pkg,
   ScanProgress,
   ScanRecord,
+  SearchManager,
+  SearchResult,
 } from './types'
 
 /** True when running inside the Tauri webview (not a plain browser/test). */
@@ -32,5 +35,9 @@ export const api = {
   onOperationStarted: (cb: (id: number) => void) =>
     listen<{ operationId: number }>('operation-started', (e) => cb(e.payload.operationId)),
   onOperationFinished: (cb: (r: OperationRecord) => void) => listen<OperationRecord>('operation-finished', (e) => cb(e.payload)),
+  getSearchManagers: () => invoke<SearchManager[]>('get_search_managers'),
+  searchPackages: (managerId: string, query: string) => invoke<SearchResult[]>('search_packages', { managerId, query }),
+  getPackageDetails: (managerId: string, name: string) =>
+    invoke<PackageDetails>('get_package_details', { managerId, name }),
   onScanProgress: (cb: (p: ScanProgress) => void) => listen<ScanProgress>('scan-progress', (e) => cb(e.payload)),
 }
