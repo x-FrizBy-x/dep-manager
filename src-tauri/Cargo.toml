@@ -1,0 +1,20 @@
+[package]
+name = "unimanage"
+version = "0.1.0"
+description = "Universal Software & Dependency Manager"
+edition = "2021"
+
+[lib]
+name = "unimanage_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+which = "8"
