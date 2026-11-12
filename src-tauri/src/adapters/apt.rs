@@ -1,7 +1,7 @@
 use super::{first_line, non_empty, Adapter};
 use crate::error::Result;
 use crate::exec::Runner;
-use crate::model::{Package, PackageDetails, PackageKind, SearchHit, UpdateInfo};
+use crate::model::{DependencyEdge, Package, PackageDependencies, PackageDetails, PackageKind, SearchHit, UpdateInfo};
 use std::collections::HashSet;
 
 pub struct Apt;
@@ -66,6 +66,144 @@ impl Adapter for Apt {
         let out = r.run("apt-cache", &["show", name])?.ok()?;
         parse_show(&out.stdout)
     }
+
+    fn supports_dependencies(&self) -> bool {
+        true
+    }
+
+    fn dependencies(&self, r: &dyn Runner, name: &str) -> Result<PackageDependencies> {
+        validate_apt_name(name)?;
+        // Only hard dependencies (Depends / Pre-Depends) among INSTALLED packages.
+        const HARD: [&str; 6] =
+            ["--installed", "--no-recommends", "--no-suggests", "--no-conflicts", "--no-breaks", "--no-replaces"];
+        let mut fwd: Vec<&str> = vec!["depends", "--recurse", "--no-enhances"];
+        fwd.extend(HARD);
+        fwd.push(name);
+        let closure = r.run("apt-cache", &fwd)?;
+        // An unknown or uninstalled package prints nothing on stdout.
+        if closure.stdout.trim().is_empty() {
+            return Err(crate::error::AppError::Other(format!("`{name}` is not an installed apt package")));
+        }
+
+        let mut rev: Vec<&str> = vec!["rdepends", "--no-enhances"];
+        rev.extend(HARD);
+        rev.push(name);
+        let hard_rdeps = parse_rdepends(&r.run("apt-cache", &rev)?.stdout, name);
+
+        // Recommends also keep an automatic package from being auto-removed.
+        let rev_all = [
+            "rdepends", "--installed", "--no-suggests", "--no-conflicts", "--no-breaks", "--no-replaces", "--no-enhances", name,
+        ];
+        let all_rdeps = parse_rdepends(&r.run("apt-cache", &rev_all)?.stdout, name);
+
+        let auto = r.run("apt-mark", &["showauto"])?.ok()?.stdout.lines().any(|l| l.trim() == name);
+        build_dependencies(name, &closure.stdout, &hard_rdeps, &all_rdeps, auto)
+    }
+}
+
+/// One stanza of `apt-cache depends --recurse`: a package and its dependency lines.
+pub(crate) struct DepStanza {
+    pub name: String,
+    pub deps: Vec<DependencyEdge>,
+}
+
+/// Parses `apt-cache depends` output. Package names start in column 0;
+/// `  Depends: x` lines are dependencies, `  |Depends: x` are alternatives,
+/// `<x>` is a virtual package, and lines indented further list its providers.
+pub(crate) fn parse_depends(stdout: &str) -> Vec<DepStanza> {
+    let mut out: Vec<DepStanza> = Vec::new();
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            out.push(DepStanza { name: line.trim().to_string(), deps: vec![] });
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        let Some(cur) = out.last_mut() else { continue };
+        if indent > 2 {
+            continue; // provider of a virtual package
+        }
+        let t = line.trim();
+        let (alt, t) = t.strip_prefix('|').map(|r| (true, r)).unwrap_or((false, t));
+        let Some((kind, name)) = t.split_once(": ") else { continue };
+        let name = name.trim();
+        let virt = name.starts_with('<');
+        let mut kind = kind.trim().to_string();
+        if alt {
+            kind.push_str(" (alternative)");
+        }
+        if virt {
+            kind.push_str(" (virtual)");
+        }
+        cur.deps.push(DependencyEdge {
+            name: name.trim_matches(|c| c == '<' || c == '>').to_string(),
+            version: None,
+            kind,
+            installed: true,
+        });
+    }
+    out
+}
+
+/// `apt-cache rdepends`: header lines, then one package per line (repeated per
+/// relation, `|` marks alternatives). Returns each name once.
+pub(crate) fn parse_rdepends(stdout: &str, subject: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for line in stdout.lines().filter(|l| l.starts_with(' ')) {
+        let n = line.trim().trim_start_matches('|').trim();
+        if !n.is_empty() && n != subject && !names.iter().any(|x| x == n) {
+            names.push(n.to_string());
+        }
+    }
+    names
+}
+
+pub(crate) fn build_dependencies(
+    name: &str,
+    closure: &str,
+    hard_rdeps: &[String],
+    all_rdeps: &[String],
+    auto: bool,
+) -> Result<PackageDependencies> {
+    let stanzas = parse_depends(closure);
+    let first = stanzas
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| crate::error::AppError::Other(format!("`{name}` is not an installed apt package")))?;
+    let depends_on = first.deps.clone();
+    let direct: HashSet<&str> = depends_on.iter().map(|e| e.name.as_str()).collect();
+    let mut transitive: Vec<DependencyEdge> = stanzas
+        .iter()
+        .filter(|s| s.name != name && !direct.contains(s.name.as_str()))
+        .map(|s| DependencyEdge { name: s.name.clone(), version: None, kind: "transitive".into(), installed: true })
+        .collect();
+    transitive.sort_by(|a, b| a.name.cmp(&b.name));
+    let required_by = hard_rdeps
+        .iter()
+        .map(|n| DependencyEdge { name: n.clone(), version: None, kind: "Depends".into(), installed: true })
+        .collect();
+
+    let orphan_hint = (auto && all_rdeps.is_empty()).then(|| {
+        "Inferred: installed automatically and no installed package depends on or recommends it, so `apt autoremove` would likely offer to remove it. UniManage never removes anything on its own.".to_string()
+    });
+    Ok(PackageDependencies {
+        manager_id: "apt".into(),
+        name: name.to_string(),
+        version: None,
+        install_reason: Some(
+            if auto { "Installed automatically (as a dependency)" } else { "Installed manually" }.into(),
+        ),
+        depends_on,
+        transitive,
+        required_by,
+        orphan_hint,
+        notes: vec![
+            "Only Depends and Pre-Depends between installed packages are shown; Recommends and Suggests are not treated as dependencies.".into(),
+            "\"alternative\" means any one of several packages satisfies the dependency; \"virtual\" means a capability provided by some installed package.".into(),
+        ],
+    })
 }
 
 /// Debian package names: lowercase alphanumerics and `+ - .`, starting with an
@@ -187,6 +325,54 @@ pub(crate) fn parse_upgradable(stdout: &str) -> Vec<UpdateInfo> {
 mod tests {
     use super::*;
     use crate::exec::fake::FakeRunner;
+
+    /// Shapes captured from `apt-cache` on Ubuntu 26.04 (WSL).
+    const CURL_CLOSURE: &str = "curl\n  Depends: libcurl4t64\n  Depends: libc6\n  Depends: zlib1g\nlibcurl4t64\n  Depends: libbrotli1\n  Depends: libc6\n  Depends: zlib1g\nlibc6\n  Depends: libgcc-s1\nzlib1g\n  Depends: libc6\nlibbrotli1\n  Depends: libc6\nlibgcc-s1\n  Depends: libc6\n";
+
+    #[test]
+    fn dependencies_direct_transitive_and_reverse() {
+        let rdeps = parse_rdepends("libcurl4t64\nReverse Depends:\n  curl\n  curl\n  |wget\n  libcurl4t64\n", "libcurl4t64");
+        assert_eq!(rdeps, vec!["curl", "wget"]);
+        let d = build_dependencies("curl", CURL_CLOSURE, &[], &[], false).unwrap();
+        assert_eq!(d.depends_on.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["libcurl4t64", "libc6", "zlib1g"]);
+        let t: Vec<_> = d.transitive.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(t, vec!["libbrotli1", "libgcc-s1"]);
+        assert_eq!(d.install_reason.as_deref(), Some("Installed manually"));
+        assert!(d.orphan_hint.is_none());
+    }
+
+    #[test]
+    fn orphan_hint_only_for_auto_without_reverse_deps() {
+        let c = "foo\n  Depends: libc6\n";
+        assert!(build_dependencies("foo", c, &[], &[], true).unwrap().orphan_hint.is_some());
+        assert!(build_dependencies("foo", c, &[], &["bar".into()], true).unwrap().orphan_hint.is_none());
+        assert!(build_dependencies("foo", c, &[], &[], false).unwrap().orphan_hint.is_none());
+        assert!(build_dependencies("foo", "", &[], &[], true).is_err());
+    }
+
+    #[test]
+    fn depends_parser_handles_alternatives_virtuals_and_providers() {
+        let s = parse_depends("pkg\n  PreDepends: a\n  |Depends: b\n  Depends: c\n  Depends: <mail-transport-agent>\n    postfix\n    exim4\n  Depends: d\n");
+        assert_eq!(s.len(), 1);
+        let k: Vec<_> = s[0].deps.iter().map(|e| (e.name.as_str(), e.kind.as_str())).collect();
+        assert_eq!(
+            k,
+            vec![
+                ("a", "PreDepends"),
+                ("b", "Depends (alternative)"),
+                ("c", "Depends"),
+                ("mail-transport-agent", "Depends (virtual)"),
+                ("d", "Depends"),
+            ]
+        );
+    }
+
+    #[test]
+    fn dependencies_validate_name() {
+        let r = FakeRunner::new(&["apt-cache"]);
+        assert!(Apt.dependencies(&r, "bad name; rm").is_err());
+        assert!(Apt.dependencies(&r, "--help").is_err());
+    }
 
     #[test]
     fn parses_installed_and_skips_removed() {

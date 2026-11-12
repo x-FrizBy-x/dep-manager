@@ -1,7 +1,7 @@
 use super::{first_line, Adapter};
 use crate::error::{AppError, Result};
 use crate::exec::Runner;
-use crate::model::{Package, PackageDetails, PackageKind, SearchHit, UpdateInfo};
+use crate::model::{DependencyEdge, Package, PackageDependencies, PackageDetails, PackageKind, SearchHit, UpdateInfo};
 use serde_json::Value;
 
 /// Global npm packages only. Project-level dependencies are deliberately
@@ -61,6 +61,96 @@ impl Adapter for Npm {
         let out = r.run("npm", &["view", name, "--json"])?.ok()?;
         parse_view(&out.stdout)
     }
+
+    fn supports_dependencies(&self) -> bool {
+        true
+    }
+
+    fn dependencies(&self, r: &dyn Runner, name: &str) -> Result<PackageDependencies> {
+        crate::ops::validate_npm_name(name)?;
+        // Like `npm ls -g --depth=0`, a non-zero exit (extraneous/invalid
+        // entries) still comes with usable JSON, so the status is ignored.
+        let out = r.run("npm", &["ls", "-g", "--all", "--json"])?;
+        parse_dependencies(&out.stdout, name)
+    }
+}
+
+/// `npm ls -g --all --json`: `{dependencies: {name: {version, dependencies}}}`.
+/// An entry without `version` (usually `{}`) is declared but not installed,
+/// typically an optional dependency for another platform.
+pub(crate) fn parse_dependencies(stdout: &str, name: &str) -> Result<PackageDependencies> {
+    let root: Value = serde_json::from_str(stdout)?;
+    let top = root.get("dependencies").and_then(Value::as_object);
+    let subject = top
+        .and_then(|t| t.get(name))
+        .ok_or_else(|| AppError::Other(format!("`{name}` is not a globally installed npm package")))?;
+
+    let edge = |n: &str, v: &Value, kind: &str| DependencyEdge {
+        name: n.to_string(),
+        version: v.get("version").and_then(Value::as_str).map(String::from),
+        kind: kind.to_string(),
+        installed: v.get("version").is_some(),
+    };
+    let children = |v: &Value| v.get("dependencies").and_then(Value::as_object).cloned().unwrap_or_default();
+
+    let depends_on: Vec<DependencyEdge> = children(subject)
+        .iter()
+        .map(|(n, v)| edge(n, v, if v.get("version").is_some() { "dependency" } else { "optional / not installed" }))
+        .collect();
+
+    // Everything below the direct level, de-duplicated by name@version.
+    let mut seen: std::collections::HashSet<(String, Option<String>)> =
+        depends_on.iter().map(|e| (e.name.clone(), e.version.clone())).collect();
+    let mut transitive = Vec::new();
+    let mut stack: Vec<Value> = children(subject).into_values().collect();
+    while let Some(node) = stack.pop() {
+        for (n, v) in children(&node) {
+            let e = edge(&n, &v, "transitive");
+            if e.installed && seen.insert((e.name.clone(), e.version.clone())) {
+                transitive.push(e);
+            }
+            stack.push(v);
+        }
+    }
+    transitive.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Other global packages whose trees contain this package.
+    let mut required_by = Vec::new();
+    for (parent, pv) in top.into_iter().flatten().filter(|(n, _)| n.as_str() != name) {
+        let mut stack = vec![(parent.clone(), pv.clone())];
+        while let Some((pname, node)) = stack.pop() {
+            for (n, v) in children(&node) {
+                if n == name && v.get("version").is_some() {
+                    let e = DependencyEdge {
+                        name: pname.clone(),
+                        version: node.get("version").and_then(Value::as_str).map(String::from),
+                        kind: "dependency".into(),
+                        installed: true,
+                    };
+                    if !required_by.contains(&e) {
+                        required_by.push(e);
+                    }
+                }
+                stack.push((n, v));
+            }
+        }
+    }
+
+    Ok(PackageDependencies {
+        manager_id: "npm".into(),
+        name: name.to_string(),
+        version: subject.get("version").and_then(Value::as_str).map(String::from),
+        install_reason: Some("Installed explicitly (top-level global package)".into()),
+        depends_on,
+        transitive,
+        required_by,
+        orphan_hint: None,
+        notes: vec![
+            "npm gives every global package its own dependency tree, so the same library can appear in several trees.".into(),
+            "Reverse dependencies are only searched among globally installed packages.".into(),
+            "Entries marked \"optional / not installed\" are declared by the package but absent on this machine (usually other platforms).".into(),
+        ],
+    })
 }
 
 /// `npm search --json`: an array of `{name, version, description, ...}`.
@@ -222,6 +312,41 @@ mod tests {
         assert!(Npm.details(&r, "bad name").is_err());
         let r = FakeRunner::new(&["npm"]).on("npm search --json --searchlimit=10 is odd", 0, "[]");
         assert!(Npm.search(&r, "is odd", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn dependency_tree_direct_transitive_reverse() {
+        let j = r#"{"name":"npm","dependencies":{
+          "app":{"version":"1.0.0","dependencies":{
+              "left":{"version":"2.0.0","dependencies":{"deep":{"version":"3.1.0"}}},
+              "native-win":{"version":"1.1.0"},
+              "native-mac":{}}},
+          "tool":{"version":"0.5.0","dependencies":{"left":{"version":"2.0.0"}}},
+          "left":{"version":"2.0.0","dependencies":{"deep":{"version":"3.1.0"}}}}}"#;
+        let d = parse_dependencies(j, "app").unwrap();
+        assert_eq!(d.version.as_deref(), Some("1.0.0"));
+        assert_eq!(d.depends_on.len(), 3);
+        let mac = d.depends_on.iter().find(|e| e.name == "native-mac").unwrap();
+        assert!(!mac.installed && mac.version.is_none());
+        assert_eq!(d.transitive.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["deep"]);
+        assert!(d.required_by.is_empty());
+        assert!(d.orphan_hint.is_none());
+
+        // `left` is a global package of its own AND a dependency of app and tool.
+        let l = parse_dependencies(j, "left").unwrap();
+        let mut by: Vec<_> = l.required_by.iter().map(|e| e.name.as_str()).collect();
+        by.sort();
+        assert_eq!(by, vec!["app", "tool"]);
+        assert_eq!(l.depends_on[0].name, "deep");
+    }
+
+    #[test]
+    fn dependency_tree_rejects_unknown_and_invalid() {
+        let j = r#"{"dependencies":{"app":{"version":"1.0.0"}}}"#;
+        assert!(parse_dependencies(j, "nope").is_err());
+        let r = crate::exec::fake::FakeRunner::new(&["npm"]);
+        assert!(Npm.dependencies(&r, "bad name; rm").is_err());
+        assert!(parse_dependencies("", "app").is_err());
     }
 
     #[test]

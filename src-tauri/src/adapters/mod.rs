@@ -5,7 +5,7 @@
 
 use crate::error::{AppError, Result};
 use crate::exec::Runner;
-use crate::model::{Package, PackageDetails, SearchHit, UpdateInfo};
+use crate::model::{Package, PackageDependencies, PackageDetails, SearchHit, UpdateInfo};
 use std::path::PathBuf;
 
 pub mod apt;
@@ -45,6 +45,15 @@ pub trait Adapter: Send + Sync {
     /// validated with [`validate_query`].
     fn search(&self, _r: &dyn Runner, _query: &str, _limit: usize) -> Result<Vec<SearchHit>> {
         Err(AppError::Unsupported(format!("{} search is not implemented", self.display_name())))
+    }
+    /// Whether `dependencies` is implemented for this manager.
+    fn supports_dependencies(&self) -> bool {
+        false
+    }
+    /// Direct, transitive and reverse dependencies of one installed package.
+    /// `name` is validated by the implementation.
+    fn dependencies(&self, _r: &dyn Runner, _name: &str) -> Result<PackageDependencies> {
+        Err(AppError::Unsupported(format!("{} dependency data is not implemented", self.display_name())))
     }
     /// Details for one package. `name` is validated by the implementation.
     fn details(&self, _r: &dyn Runner, _name: &str) -> Result<PackageDetails> {

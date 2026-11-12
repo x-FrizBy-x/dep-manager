@@ -134,3 +134,27 @@ export interface PackageDetails {
   dependencies: string[]
   metadata: Record<string, string>
 }
+
+export interface DependencyManager {
+  id: string
+  displayName: string
+}
+
+export interface DependencyEdge {
+  name: string
+  version: string | null
+  kind: string
+  installed: boolean
+}
+
+export interface PackageDependencies {
+  managerId: string
+  name: string
+  version: string | null
+  installReason: string | null
+  dependsOn: DependencyEdge[]
+  transitive: DependencyEdge[]
+  requiredBy: DependencyEdge[]
+  orphanHint: string | null
+  notes: string[]
+}

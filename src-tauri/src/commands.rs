@@ -4,7 +4,7 @@
 use crate::db::{OperationLogLine, OperationRecord, ScanRecord};
 use crate::error::{AppError, Result};
 use crate::exec::SystemRunner;
-use crate::model::{ManagerInfo, Package, PackageDetails, SearchManager, SearchResult};
+use crate::model::{DependencyManager, ManagerInfo, Package, PackageDependencies, PackageDetails, SearchManager, SearchResult};
 use crate::ops::{self, OpKind, OperationPlan};
 use crate::{adapters, scanner, AppState};
 use std::sync::atomic::Ordering;
@@ -237,6 +237,54 @@ pub async fn search_packages(
 pub async fn get_package_details(manager_id: String, name: String) -> Result<PackageDetails> {
     tauri::async_runtime::spawn_blocking(move || {
         adapter_for(&manager_id)?.details(&SystemRunner::default(), &name)
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+// ---- dependency explorer --------------------------------------------------
+
+/// Managers whose dependency data can be read and that are present here.
+#[tauri::command]
+pub fn get_dependency_managers() -> Vec<DependencyManager> {
+    let runner = SystemRunner::default();
+    adapters::all()
+        .iter()
+        .filter(|a| a.supports_dependencies() && a.detect(&runner).is_some())
+        .map(|a| DependencyManager { id: a.id().into(), display_name: a.display_name().into() })
+        .collect()
+}
+
+/// Dependencies of one installed package within one manager. Versions the
+/// manager did not report are filled in from the local inventory.
+#[tauri::command]
+pub async fn get_package_dependencies(
+    state: State<'_, AppState>,
+    manager_id: String,
+    name: String,
+) -> Result<PackageDependencies> {
+    let installed = with_db(&state, |d| d.list_packages())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let adapter = adapters::all()
+            .into_iter()
+            .find(|a| a.id() == manager_id && a.supports_dependencies())
+            .ok_or_else(|| AppError::Unsupported(format!("{manager_id}: dependency data is not implemented")))?;
+        let mut deps = adapter.dependencies(&SystemRunner::default(), &name)?;
+        let version_of = |n: &str| {
+            installed
+                .iter()
+                .find(|p| p.package_manager == manager_id && p.name == n)
+                .and_then(|p| p.version.clone())
+        };
+        if deps.version.is_none() {
+            deps.version = version_of(&deps.name);
+        }
+        for e in deps.depends_on.iter_mut().chain(&mut deps.transitive).chain(&mut deps.required_by) {
+            if e.version.is_none() && e.installed {
+                e.version = version_of(&e.name);
+            }
+        }
+        Ok(deps)
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?

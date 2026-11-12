@@ -55,6 +55,8 @@ pub fn run() {
             commands::get_search_managers,
             commands::search_packages,
             commands::get_package_details,
+            commands::get_dependency_managers,
+            commands::get_package_dependencies,
         ])
         .run(tauri::generate_context!())
         .expect("error while running UniManage");

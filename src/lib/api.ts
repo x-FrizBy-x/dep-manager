@@ -7,6 +7,8 @@ import type {
   OperationPlan,
   OperationRecord,
   OpKind,
+  DependencyManager,
+  PackageDependencies,
   PackageDetails,
   Pkg,
   ScanProgress,
@@ -39,5 +41,8 @@ export const api = {
   searchPackages: (managerId: string, query: string) => invoke<SearchResult[]>('search_packages', { managerId, query }),
   getPackageDetails: (managerId: string, name: string) =>
     invoke<PackageDetails>('get_package_details', { managerId, name }),
+  getDependencyManagers: () => invoke<DependencyManager[]>('get_dependency_managers'),
+  getPackageDependencies: (managerId: string, name: string) =>
+    invoke<PackageDependencies>('get_package_dependencies', { managerId, name }),
   onScanProgress: (cb: (p: ScanProgress) => void) => listen<ScanProgress>('scan-progress', (e) => cb(e.payload)),
 }

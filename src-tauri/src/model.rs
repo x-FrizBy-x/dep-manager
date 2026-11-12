@@ -157,3 +157,43 @@ pub struct SearchManager {
     pub display_name: String,
     pub can_install: bool,
 }
+
+/// One dependency relationship, exactly as the package manager reports it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyEdge {
+    pub name: String,
+    pub version: Option<String>,
+    /// Manager wording, e.g. `Depends`, `PreDepends`, `dependency`.
+    pub kind: String,
+    pub installed: bool,
+}
+
+/// Dependency picture of ONE installed package inside ONE manager. Graphs are
+/// never merged across managers. Everything except `orphan_hint` is reported
+/// by the manager itself (confirmed); `orphan_hint` is an inference.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageDependencies {
+    pub manager_id: String,
+    pub name: String,
+    pub version: Option<String>,
+    /// Why the package is on the system, when the manager records it.
+    pub install_reason: Option<String>,
+    pub depends_on: Vec<DependencyEdge>,
+    /// Everything reachable through `depends_on`, excluding the direct ones.
+    pub transitive: Vec<DependencyEdge>,
+    /// Installed packages that depend on this one.
+    pub required_by: Vec<DependencyEdge>,
+    /// Inferred, never acted on automatically.
+    pub orphan_hint: Option<String>,
+    pub notes: Vec<String>,
+}
+
+/// A manager whose dependency data UniManage can read.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyManager {
+    pub id: String,
+    pub display_name: String,
+}
