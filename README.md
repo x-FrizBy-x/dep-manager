@@ -14,7 +14,7 @@ Read-only inventory for eight managers; writes (install / update / uninstall) fo
 | Overview + Installed Software pages (search, filters, sort, detail panel) | done |
 | Operations (npm only): preview → explicit confirmation → execute, live operation console, cancel (kills the whole process tree), history page | done |
 | Update Center: multi-select batch update with one review dialog, sequential execution, no "update all" | done (npm only) |
-| Package Explorer: search + details | npm, APT and Snap (apt and snap are read-only: no install); snap parsers tested on real Ubuntu output, not yet run in the app |
+| Package Explorer: search + details | npm, APT, Snap and Flatpak (all but npm are read-only: no install); snap/flatpak parsers tested on real Ubuntu (WSL) output, not yet run in the app |
 | Dependency graph, backup/restore, settings, background rescans | **not implemented** (nav items show "Soon") |
 | Install / update / remove for APT, Snap, Flatpak, pipx, uv, mise, pnpm | **not implemented** (no privilege-escalation design yet) |
 
