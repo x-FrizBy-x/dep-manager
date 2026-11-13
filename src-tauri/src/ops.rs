@@ -49,15 +49,30 @@ pub struct OperationPlan {
     /// Human-readable rendering for the preview. Display only, never executed.
     pub command: String,
     pub requires_elevation: bool,
+    /// False for elevated operations: a root child cannot be stopped by an unprivileged
+    /// app, and killing apt/snap halfway can leave the system in a broken state.
+    pub cancellable: bool,
+    /// What a dry run says will change (apt: `Inst ...` / `Remv ...` lines). Display only.
+    pub effects: Vec<String>,
     pub warnings: Vec<String>,
     #[serde(skip)]
     pub created_at: i64,
 }
 
-/// Managers that currently support write operations. All of them work without
-/// elevated privileges (npm global prefix, pipx venvs, per-user Flatpak).
+/// Managers that currently support write operations. npm, pipx and per-user Flatpak
+/// need no privileges; apt and snap run through polkit's `pkexec` (see `ELEVATOR`).
 pub fn supports_operations(manager_id: &str) -> bool {
-    matches!(manager_id, "npm" | "pipx" | "flatpak")
+    matches!(manager_id, "npm" | "pipx" | "flatpak" | "apt" | "snap")
+}
+
+/// The only way UniManage gains privileges: polkit shows its own authentication
+/// dialog and UniManage never sees, asks for or stores a password. Absolute path so
+/// a poisoned PATH cannot substitute another program.
+pub const ELEVATOR: &str = "/usr/bin/pkexec";
+
+/// Managers whose operations run as root through `ELEVATOR`.
+pub fn needs_elevation(manager_id: &str) -> bool {
+    matches!(manager_id, "apt" | "snap")
 }
 
 /// Whether an exact version can be requested at install time. Flatpak installs a
@@ -74,6 +89,31 @@ pub struct PlanContext {
     pub remote: Option<String>,
     /// Flatpak: `user` or `system` as recorded by the scan.
     pub scope: Option<String>,
+    /// apt: lines of an unprivileged `apt-get -s` dry run for this exact operation.
+    pub simulation: Vec<String>,
+}
+
+/// Keeps the `Inst`/`Remv`/`Purg` lines of `apt-get -s` output (what would change).
+pub fn parse_apt_simulation(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter(|l| l.starts_with("Inst ") || l.starts_with("Remv ") || l.starts_with("Purg "))
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+/// Packages whose removal can make the machine unbootable or lock the user out.
+const APT_PROTECTED: &[&str] = &[
+    "apt", "dpkg", "libc6", "systemd", "sudo", "policykit-1", "polkitd", "pkexec", "bash", "coreutils",
+    "ubuntu-minimal", "ubuntu-standard", "ubuntu-desktop", "ubuntu-server", "snapd", "init", "login",
+];
+
+/// Snaps that other snaps or snapd itself are built on.
+fn snap_is_protected(name: &str) -> bool {
+    name == "snapd"
+        || name == "bare"
+        || name == "core"
+        || (name.starts_with("core") && name[4..].chars().all(|c| c.is_ascii_digit()))
 }
 
 /// PyPI-style project names: letters, digits, `.`, `_`, `-`; must start and end alphanumeric.
@@ -227,6 +267,91 @@ fn build_flatpak(kind: OpKind, package: &str, version: Option<&str>, ctx: &PlanC
     Ok(("flatpak", args, warnings))
 }
 
+/// Wraps a privileged command: `pkexec env DEBIAN_FRONTEND=... <tool> args`. `pkexec` starts
+/// with a clean environment, so the non-interactive setting must be passed explicitly.
+fn elevated(tool: &str, args: Vec<String>, noninteractive: bool) -> Vec<String> {
+    let mut v = Vec::new();
+    if noninteractive {
+        v.push("/usr/bin/env".to_string());
+        v.push("DEBIAN_FRONTEND=noninteractive".to_string());
+    }
+    v.push(tool.to_string());
+    v.extend(args);
+    v
+}
+
+fn build_apt(kind: OpKind, package: &str, version: Option<&str>, ctx: &PlanContext) -> Result<Built> {
+    crate::adapters::apt::validate_apt_name(package)?;
+    if version.is_some() {
+        return Err(AppError::Other("apt installs the version your repositories offer; leave the version empty".into()));
+    }
+    let mut warnings = vec![
+        "Runs as root: your system will show its own password dialog. UniManage never sees the password.".to_string(),
+        "This cannot be cancelled once started; stopping apt halfway can leave packages half-configured.".to_string(),
+    ];
+    let args = match kind {
+        OpKind::Install => {
+            if ctx.previous_version.is_some() {
+                return Err(AppError::Other(format!("{package} is already installed; use update instead")));
+            }
+            vec!["install".to_string(), "-y".into(), package.into()]
+        }
+        OpKind::Update => {
+            if ctx.previous_version.is_none() {
+                return Err(AppError::Other(format!("{package} is not installed")));
+            }
+            // --only-upgrade: upgrades this package only, never installs anything new by itself.
+            vec!["install".to_string(), "--only-upgrade".into(), "-y".into(), package.into()]
+        }
+        OpKind::Uninstall => {
+            if APT_PROTECTED.contains(&package) {
+                return Err(AppError::Other(format!("refusing to remove `{package}`: the system depends on it")));
+            }
+            warnings.push(
+                "`remove` keeps configuration files; dependencies that become unused are NOT removed (no autoremove).".into(),
+            );
+            vec!["remove".to_string(), "-y".into(), package.into()]
+        }
+    };
+    Ok((ELEVATOR, elevated("/usr/bin/apt-get", args, true), warnings))
+}
+
+fn build_snap(kind: OpKind, package: &str, version: Option<&str>, ctx: &PlanContext) -> Result<Built> {
+    crate::adapters::snap::validate_snap_name(package)?;
+    if version.is_some() {
+        return Err(AppError::Other("snap installs from a channel, not a pinned version; leave the version empty".into()));
+    }
+    let mut warnings = vec![
+        "Runs as root: your system will show its own password dialog. UniManage never sees the password.".to_string(),
+        "This cannot be cancelled once started.".to_string(),
+    ];
+    let args = match kind {
+        OpKind::Install => {
+            if ctx.previous_version.is_some() {
+                return Err(AppError::Other(format!("{package} is already installed; use update instead")));
+            }
+            warnings.push(
+                "Installs from the stable channel. Snaps that need classic confinement will fail and are not forced.".into(),
+            );
+            vec!["install".to_string(), package.into()]
+        }
+        OpKind::Update => {
+            if ctx.previous_version.is_none() {
+                return Err(AppError::Other(format!("{package} is not installed")));
+            }
+            vec!["refresh".to_string(), package.into()]
+        }
+        OpKind::Uninstall => {
+            if snap_is_protected(package) {
+                return Err(AppError::Other(format!("refusing to remove `{package}`: other snaps or snapd depend on it")));
+            }
+            warnings.push("snapd saves a snapshot of the snap's data automatically before removing it.".into());
+            vec!["remove".to_string(), package.into()]
+        }
+    };
+    Ok((ELEVATOR, elevated("/usr/bin/snap", args, false), warnings))
+}
+
 /// Builds a plan. Pure: runs nothing.
 pub fn plan_operation(
     id: String,
@@ -249,10 +374,31 @@ pub fn plan_operation(
         "npm" => build_npm(kind, package, version)?,
         "pipx" => build_pipx(kind, package, version, ctx)?,
         "flatpak" => build_flatpak(kind, package, version, ctx)?,
+        "apt" => build_apt(kind, package, version, ctx)?,
+        "snap" => build_snap(kind, package, version, ctx)?,
         other => return Err(AppError::Unsupported(format!("{other}: write operations are not implemented"))),
     };
     if kind == OpKind::Update && ctx.previous_version.is_none() {
         warnings.push("Installed version is unknown.".into());
+    }
+    let elevated = needs_elevation(manager_id);
+    let effects = ctx.simulation.clone();
+    if manager_id == "apt" {
+        let removed = effects.iter().filter(|l| l.starts_with("Remv ") || l.starts_with("Purg ")).count();
+        match kind {
+            OpKind::Uninstall if removed > 1 => warnings.insert(
+                0,
+                format!("This will also REMOVE {} other package(s) that depend on {package}. Review the list below.", removed - 1),
+            ),
+            OpKind::Install | OpKind::Update if removed > 0 => warnings.insert(
+                0,
+                format!("This will REMOVE {removed} installed package(s) to resolve conflicts. Review the list below."),
+            ),
+            _ => {}
+        }
+        if effects.is_empty() {
+            warnings.push("The dry run reported no changes; this may do nothing.".into());
+        }
     }
     let command = format!("{program} {}", args.join(" "));
     Ok(OperationPlan {
@@ -265,7 +411,9 @@ pub fn plan_operation(
         program: program.into(),
         args,
         command,
-        requires_elevation: false,
+        requires_elevation: elevated,
+        cancellable: !elevated,
+        effects,
         warnings,
         created_at: now,
     })
@@ -273,6 +421,9 @@ pub fn plan_operation(
 
 /// Generous because a Flatpak runtime download can be large; the user can always cancel.
 pub const OP_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// Elevated operations cannot be cancelled, so only an extreme timeout applies.
+const ELEVATED_TIMEOUT: Duration = Duration::from_secs(6 * 60 * 60);
 
 fn lock(db: &Mutex<Db>) -> Result<std::sync::MutexGuard<'_, Db>> {
     db.lock().map_err(|_| AppError::Db("database lock poisoned".into()))
@@ -308,6 +459,10 @@ pub fn execute(
     log("info", &format!("$ {}", plan.command));
 
     let args: Vec<&str> = plan.args.iter().map(String::as_str).collect();
+    // A privileged child cannot be signalled by us, and killing only `pkexec` would leave apt
+    // running unobserved, so elevated operations ignore cancel and only stop at a long timeout.
+    let never = AtomicBool::new(false);
+    let (cancel, timeout) = if plan.requires_elevation { (&never, ELEVATED_TIMEOUT) } else { (cancel, timeout) };
     let run = run_streaming(&plan.program, &args, timeout, cancel, &|s, l| log(s, l));
 
     let (result, error) = match run {
@@ -483,8 +638,60 @@ mod tests {
     }
 
     #[test]
+    fn apt_plans_go_through_pkexec_without_a_shell() {
+        let installed = PlanContext { previous_version: Some("1.0".into()), ..Default::default() };
+        let none = PlanContext::default();
+        let p = plan_operation("p".into(), 0, "apt", OpKind::Install, "hello", None, &none).unwrap();
+        assert_eq!(p.program, ELEVATOR);
+        assert_eq!(p.args, ["/usr/bin/env", "DEBIAN_FRONTEND=noninteractive", "/usr/bin/apt-get", "install", "-y", "hello"]);
+        assert!(p.requires_elevation && !p.cancellable);
+        let u = plan_operation("p".into(), 0, "apt", OpKind::Update, "hello", None, &installed).unwrap();
+        assert!(u.args.contains(&"--only-upgrade".to_string()));
+        let r = plan_operation("p".into(), 0, "apt", OpKind::Uninstall, "hello", None, &installed).unwrap();
+        assert!(r.args.contains(&"remove".to_string()) && !r.command.contains("autoremove") && !r.command.contains("purge"));
+        assert!(plan_operation("p".into(), 0, "apt", OpKind::Install, "hello", None, &installed).is_err());
+        assert!(plan_operation("p".into(), 0, "apt", OpKind::Update, "hello", None, &none).is_err());
+        assert!(plan_operation("p".into(), 0, "apt", OpKind::Install, "hello", Some("1.0"), &none).is_err());
+        for bad in ["-oAPT::x=1", "Hello", "a b", "x;y", "a", "--purge"] {
+            assert!(plan_operation("p".into(), 0, "apt", OpKind::Install, bad, None, &none).is_err(), "{bad}");
+        }
+        for protected in ["apt", "dpkg", "libc6", "systemd", "sudo", "policykit-1", "polkitd", "pkexec"] {
+            assert!(plan_operation("p".into(), 0, "apt", OpKind::Uninstall, protected, None, &installed).is_err(), "{protected}");
+        }
+    }
+
+    #[test]
+    fn apt_simulation_drives_warnings() {
+        let sim = parse_apt_simulation("Reading package lists...\nRemv foo [1.0]\nRemv bar [2.0]\nInst baz [1] (2 x)\nConf baz\n");
+        assert_eq!(sim.len(), 3);
+        let ctx = PlanContext { previous_version: Some("1.0".into()), simulation: sim, ..Default::default() };
+        let p = plan_operation("p".into(), 0, "apt", OpKind::Uninstall, "foo", None, &ctx).unwrap();
+        assert!(p.warnings[0].contains("REMOVE 1 other"));
+        assert_eq!(p.effects.len(), 3);
+        let u = plan_operation("p".into(), 0, "apt", OpKind::Update, "foo", None, &ctx).unwrap();
+        assert!(u.warnings[0].contains("REMOVE 2"));
+    }
+
+    #[test]
+    fn snap_plans() {
+        let installed = PlanContext { previous_version: Some("1".into()), ..Default::default() };
+        let none = PlanContext::default();
+        let p = plan_operation("p".into(), 0, "snap", OpKind::Install, "hello-world", None, &none).unwrap();
+        assert_eq!(p.program, ELEVATOR);
+        assert_eq!(p.args, ["/usr/bin/snap", "install", "hello-world"]);
+        let u = plan_operation("p".into(), 0, "snap", OpKind::Update, "hello-world", None, &installed).unwrap();
+        assert_eq!(u.args[1], "refresh");
+        for protected in ["snapd", "core", "core22", "bare"] {
+            assert!(plan_operation("p".into(), 0, "snap", OpKind::Uninstall, protected, None, &installed).is_err(), "{protected}");
+        }
+        assert!(plan_operation("p".into(), 0, "snap", OpKind::Install, "--classic", None, &none).is_err());
+        assert!(plan_operation("p".into(), 0, "snap", OpKind::Install, "x", Some("1"), &none).is_err());
+    }
+
+    #[test]
     fn capabilities() {
-        assert!(supports_operations("pipx") && supports_operations("flatpak") && !supports_operations("apt"));
-        assert!(supports_version_pin("npm") && supports_version_pin("pipx") && !supports_version_pin("flatpak"));
+        assert!(supports_operations("pipx") && supports_operations("flatpak") && supports_operations("apt") && supports_operations("snap") && !supports_operations("uv"));
+        assert!(supports_version_pin("npm") && supports_version_pin("pipx") && !supports_version_pin("flatpak") && !supports_version_pin("apt"));
+        assert!(needs_elevation("apt") && needs_elevation("snap") && !needs_elevation("pipx"));
     }
 }

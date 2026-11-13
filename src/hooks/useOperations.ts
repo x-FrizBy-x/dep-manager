@@ -3,7 +3,7 @@ import { api, inTauri } from '@/lib/api'
 import type { OperationLogLine, OperationPlan, OperationRecord, OpKind } from '@/lib/types'
 
 /** Managers whose write operations are implemented in the backend. */
-export const OPERABLE_MANAGERS = new Set(['npm', 'pipx', 'flatpak'])
+export const OPERABLE_MANAGERS = new Set(['npm', 'pipx', 'flatpak', 'apt', 'snap'])
 
 /** Managers where an exact version can be requested at install time (Flatpak installs a branch). */
 export const VERSION_PINNABLE = new Set(['npm', 'pipx'])

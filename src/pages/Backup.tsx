@@ -100,7 +100,7 @@ export function Backup({ inv, ops }: { inv: Inventory; ops: Operations }) {
       <p className="mb-3 text-sm text-muted-foreground">
         A manifest records what each package manager has installed (apt: manually installed only; runtimes skipped). It is not an exact
         reproduction guarantee, and restoring never removes anything. Restore is available only for managers with an install pipeline
-        (npm, pipx and per-user Flatpak; Flatpak restores the app, not a pinned version); every restore goes through the usual preview and confirmation.
+        (npm, pipx, per-user Flatpak, APT and Snap; only npm and pipx restore a pinned version; APT and Snap ask for a system password per package); every restore goes through the usual preview and confirmation.
       </p>
 
       {error && (

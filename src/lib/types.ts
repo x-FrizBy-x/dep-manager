@@ -83,6 +83,9 @@ export interface OperationPlan {
   args: string[]
   command: string
   requiresElevation: boolean
+  cancellable: boolean
+  /** Dry-run lines (apt `Inst`/`Remv`): what would change. */
+  effects: string[]
   warnings: string[]
 }
 

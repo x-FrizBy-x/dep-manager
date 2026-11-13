@@ -36,10 +36,22 @@ export function ConfirmDialog({ ops }: { ops: Operations }) {
             </>
           )}
           <dt className="text-muted-foreground">Elevation</dt>
-          <dd>{plan.requiresElevation ? 'Required' : 'Not required'}</dd>
+          <dd>{plan.requiresElevation ? 'Required: a system password dialog (polkit) will appear' : 'Not required'}</dd>
         </dl>
         <div className="mt-3 text-xs text-muted-foreground">Exact command that will run (no shell):</div>
         <pre className="mt-1 overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs">{plan.command}</pre>
+        {plan.effects.length > 0 && (
+          <div className="mt-3">
+            <div className="text-xs text-muted-foreground">Dry run: what would change ({plan.effects.length})</div>
+            <ul className="mt-1 max-h-40 overflow-auto rounded-md bg-muted p-2 font-mono text-xs">
+              {plan.effects.map((e) => (
+                <li key={e} className={e.startsWith('Remv') || e.startsWith('Purg') ? 'text-destructive' : ''}>
+                  {e}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {plan.warnings.length > 0 && (
           <ul className="mt-3 list-disc space-y-1 rounded-md bg-warning/10 p-2 pl-6 text-xs">
             {plan.warnings.map((w) => (
@@ -144,10 +156,12 @@ export function OperationConsole({ ops }: { ops: Operations }) {
           <Button variant="ghost" size="icon" className="size-7" onClick={ops.dismiss} aria-label="Close console">
             <X className="size-4" />
           </Button>
-        ) : (
+        ) : active.plan.cancellable ? (
           <Button variant="outline" size="sm" disabled={ops.cancelling} onClick={() => void ops.cancelRun()}>
             Cancel operation
           </Button>
+        ) : (
+          <span className="text-xs text-muted-foreground">Runs as root: cannot be cancelled</span>
         )}
       </header>
       <pre ref={box} className="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs leading-5 break-all whitespace-pre-wrap" role="log" aria-live="polite">

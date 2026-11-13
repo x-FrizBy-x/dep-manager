@@ -3,7 +3,7 @@
 
 use crate::db::{OperationLogLine, OperationRecord, ScanRecord};
 use crate::error::{AppError, Result};
-use crate::exec::SystemRunner;
+use crate::exec::{Runner, SystemRunner};
 use crate::model::{DependencyManager, ManagerInfo, Package, PackageDependencies, PackageDetails, SearchManager, SearchResult};
 use crate::ops::{self, OpKind, OperationPlan};
 use crate::{adapters, scanner, AppState};
@@ -123,7 +123,37 @@ pub async fn preview_operation(
         previous_version: local.as_ref().and_then(|p| p.version.clone()),
         scope: local.as_ref().and_then(|p| p.metadata.get("installation").cloned()),
         remote: None,
+        simulation: Vec::new(),
     };
+    if ops::needs_elevation(&manager_id) && !std::path::Path::new(ops::ELEVATOR).exists() {
+        return Err(AppError::Other(format!(
+            "{} was not found. UniManage changes {manager_id} packages only through polkit's pkexec and never asks for a password itself; install the `pkexec` package to enable this.",
+            ops::ELEVATOR
+        )));
+    }
+    if manager_id == "apt" {
+        // Unprivileged dry run: shows exactly what apt would install/remove before anything is confirmed.
+        crate::adapters::apt::validate_apt_name(&package)?;
+        let sim_args: Vec<String> = match kind {
+            OpKind::Install => vec!["-s".into(), "install".into(), package.clone()],
+            OpKind::Update => vec!["-s".into(), "install".into(), "--only-upgrade".into(), package.clone()],
+            OpKind::Uninstall => vec!["-s".into(), "remove".into(), package.clone()],
+        };
+        let out = tauri::async_runtime::spawn_blocking(move || {
+            let args: Vec<&str> = sim_args.iter().map(String::as_str).collect();
+            SystemRunner::default().run("apt-get", &args)
+        })
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?;
+        match out {
+            Ok(o) if o.success() => ctx.simulation = ops::parse_apt_simulation(&o.stdout),
+            Ok(o) => {
+                let why = o.stderr.lines().chain(o.stdout.lines()).find(|l| l.starts_with("E:")).unwrap_or("apt could not simulate this operation");
+                return Err(AppError::Other(format!("apt dry run failed: {why}")));
+            }
+            Err(e) => return Err(AppError::Other(format!("apt dry run failed: {e}"))),
+        }
+    }
     if manager_id == "flatpak" && kind == OpKind::Install {
         // Find which remote carries the app (also proves it exists) before building the command.
         let pkg = package.clone();

@@ -114,3 +114,42 @@ fn flatpak_install_update_uninstall_per_user() {
     let sys = PlanContext { scope: Some("system".into()), ..Default::default() };
     assert!(ops::plan_operation("t".into(), 0, "flatpak", OpKind::Uninstall, app, None, &sys).is_err());
 }
+
+/// Elevated path. Only runs when the test itself is root, where `pkexec` executes the
+/// command directly without any dialog (run with `wsl -u root`); otherwise it would wait
+/// for a polkit prompt, so it skips. Uses the tiny `hello` package and removes it again.
+#[test]
+#[ignore]
+fn apt_install_update_remove_as_root() {
+    let uid = std::process::Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if uid.ok().as_deref() != Some("0") || !std::path::Path::new(ops::ELEVATOR).exists() {
+        println!("not root or no pkexec; skipping");
+        return;
+    }
+    let db = Mutex::new(Db::open_in_memory().unwrap());
+    let pkg = "hello";
+    best_effort("apt-get", &["remove", "-y", pkg]);
+    assert!(installed("apt", pkg).is_none(), "{pkg} must not be installed before the test");
+
+    // Dry run first, exactly as preview_operation does.
+    let sim = std::process::Command::new("apt-get").args(["-s", "install", pkg]).output().unwrap();
+    let lines = ops::parse_apt_simulation(&String::from_utf8_lossy(&sim.stdout));
+    println!("dry run: {lines:?}");
+    assert!(lines.iter().any(|l| l.starts_with("Inst hello")), "simulation should list hello");
+
+    let ctx = PlanContext { simulation: lines, ..Default::default() };
+    let (r, v) = run(&db, "apt", OpKind::Install, pkg, None, &ctx);
+    assert_eq!(r, "success");
+    assert!(v.is_some(), "installed version should be visible after the rescan");
+
+    // Up to date: update succeeds and changes nothing.
+    let ctx = PlanContext { previous_version: v.clone(), ..Default::default() };
+    let (r, v2) = run(&db, "apt", OpKind::Update, pkg, None, &ctx);
+    assert_eq!(r, "success");
+    assert_eq!(v2, v);
+
+    let (r, _) = run(&db, "apt", OpKind::Uninstall, pkg, None, &PlanContext { previous_version: v, ..Default::default() });
+    assert_eq!(r, "success");
+    assert!(installed("apt", pkg).is_none());
+    best_effort("apt-get", &["remove", "-y", pkg]);
+}

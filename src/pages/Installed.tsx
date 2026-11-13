@@ -81,7 +81,7 @@ function Detail({ p, onClose, ops }: { p: Pkg; onClose: () => void; ops: Operati
   )
 }
 
-const INSTALL_LABEL: Record<string, string> = { npm: 'npm (global)', pipx: 'pipx', flatpak: 'Flatpak (per-user)' }
+const INSTALL_LABEL: Record<string, string> = { npm: 'npm (global)', pipx: 'pipx', flatpak: 'Flatpak (per-user)', apt: 'APT (needs password)', snap: 'Snap (needs password)' }
 
 function InstallForm({ ops, managers }: { ops: Operations; managers: string[] }) {
   const options = managers.filter((m) => OPERABLE_MANAGERS.has(m))

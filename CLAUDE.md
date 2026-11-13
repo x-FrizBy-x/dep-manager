@@ -6,6 +6,7 @@ UniManage: safety-first unified manager over existing package managers (Tauri 2 
 - `npm install`; `npm run tauri dev` (desktop app); `npm run build` (tsc -b + vite)
 - `npm test` (Vitest); `npm run test:rust` (or `cargo test --lib` in `src-tauri`); `npm run typecheck`; `npm run lint` (oxlint; one known warning in `hooks/useInventory.ts`)
 - Real-system smoke test (read-only, ignored by default): `cargo test --manifest-path src-tauri/Cargo.toml --test real_system -- --ignored --nocapture`; used on Linux/WSL to run the real adapters
+- Elevated apt test (run as root so pkexec needs no dialog): `wsl -u root`, `real_ops apt_install --ignored`; needs the `pkexec` package
 - Real write test (installs/uninstalls a throwaway pipx and Flatpak package, per-user): `cargo test --manifest-path src-tauri/Cargo.toml --test real_ops -- --ignored --nocapture --test-threads=1`
 - UI driving: `node scripts/ui-check.mjs <shot.png> [text to click ...]` (Playwright over CDP; start app with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`)
 
@@ -17,7 +18,7 @@ UniManage: safety-first unified manager over existing package managers (Tauri 2 
 - Never pretend support; use null rather than invented values.
 - No shell: argv arrays only; strictly validate every user-supplied token (matters on Windows because `npm` is `npm.cmd`).
 - Nothing modifies the system without preview -> explicit confirmation -> execute; one operation at a time, never during a scan; log everything.
-- No privilege escalation/password handling, no auto-removal of dependencies, no "update all", nothing merged across managers by name alone.
+- Privileges: the only escalation is `/usr/bin/pkexec` (polkit shows its own dialog) for apt/snap, built in `ops.rs` (`ELEVATOR`). UniManage never sees, asks for or stores a password, never uses sudo, and elevated operations are not cancellable (a root child can't be killed safely). No auto-removal of dependencies, no "update all", nothing merged across managers by name alone.
 - Tests must not alter the user's global npm packages beyond throwaway ones that are uninstalled afterwards.
 
 ## Gotchas
