@@ -289,3 +289,74 @@ pub async fn get_package_dependencies(
     .await
     .map_err(|e| AppError::Other(e.to_string()))?
 }
+
+// ---- environment manifests ------------------------------------------------
+// Creating, importing, exporting and diffing only read the local inventory and
+// the manifest table. Restoring goes through the normal preview/confirm flow.
+
+fn load_manifest(state: &AppState, id: i64) -> Result<(i64, crate::manifest::Manifest)> {
+    let (created, content) = with_db(state, |d| d.manifest_row(id))?
+        .ok_or_else(|| AppError::Other(format!("manifest {id} not found")))?;
+    Ok((created, crate::manifest::parse(&content)?))
+}
+
+#[tauri::command]
+pub fn create_manifest(state: State<'_, AppState>, name: String) -> Result<crate::manifest::ManifestSummary> {
+    let name = name.trim().to_string();
+    if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+        return Err(AppError::Other("manifest name must be 1-100 characters".into()));
+    }
+    with_db(&state, |d| {
+        let m = crate::manifest::build(&d.list_packages()?, &d.list_managers()?, &name, std::env::consts::OS, crate::db::now());
+        let id = d.insert_manifest(&m.name, &m.platform, &crate::manifest::to_json(&m)?)?;
+        let created = d.manifest_row(id)?.map(|r| r.0).unwrap_or(m.created_at);
+        Ok(crate::manifest::summary(id, created, &m))
+    })
+}
+
+#[tauri::command]
+pub fn list_manifests(state: State<'_, AppState>) -> Result<Vec<crate::manifest::ManifestSummary>> {
+    with_db(&state, |d| {
+        Ok(d.list_manifest_rows()?
+            .into_iter()
+            .filter_map(|(id, created, content)| crate::manifest::parse(&content).ok().map(|m| crate::manifest::summary(id, created, &m)))
+            .collect())
+    })
+}
+
+/// Returns the manifest text for the UI to save as a file. `format`: `json` or `yaml`.
+#[tauri::command]
+pub fn export_manifest(state: State<'_, AppState>, id: i64, format: String) -> Result<String> {
+    let (_, m) = load_manifest(&state, id)?;
+    match format.as_str() {
+        "json" => crate::manifest::to_json(&m),
+        "yaml" => Ok(crate::manifest::to_yaml(&m)),
+        other => Err(AppError::Unsupported(format!("export format `{other}`"))),
+    }
+}
+
+/// Validates and stores a manifest from JSON text. Nothing is installed.
+#[tauri::command]
+pub fn import_manifest(state: State<'_, AppState>, content: String) -> Result<crate::manifest::ManifestSummary> {
+    let m = crate::manifest::parse(&content)?;
+    with_db(&state, |d| {
+        let id = d.insert_manifest(&m.name, &m.platform, &crate::manifest::to_json(&m)?)?;
+        let created = d.manifest_row(id)?.map(|r| r.0).unwrap_or(m.created_at);
+        Ok(crate::manifest::summary(id, created, &m))
+    })
+}
+
+#[tauri::command]
+pub fn delete_manifest(state: State<'_, AppState>, id: i64) -> Result<()> {
+    with_db(&state, |d| d.delete_manifest(id))
+}
+
+/// Diff of a stored manifest against the last scan. Read-only.
+#[tauri::command]
+pub fn diff_manifest(state: State<'_, AppState>, id: i64) -> Result<crate::manifest::ManifestDiff> {
+    let (_, m) = load_manifest(&state, id)?;
+    with_db(&state, |d| {
+        let detected = d.list_managers()?.into_iter().filter(|x| x.detected).map(|x| x.id).collect();
+        Ok(crate::manifest::diff(id, &m, &d.list_packages()?, &detected, ops::supports_operations))
+    })
+}

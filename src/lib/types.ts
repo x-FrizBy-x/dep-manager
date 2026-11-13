@@ -158,3 +158,36 @@ export interface PackageDependencies {
   orphanHint: string | null
   notes: string[]
 }
+
+export interface ManifestSummary {
+  id: number
+  name: string
+  platform: string
+  createdAt: number
+  packageCount: number
+  managers: string[]
+}
+
+export interface DiffEntry {
+  managerId: string
+  name: string
+  wantedVersion: string | null
+  installedVersion: string | null
+  status: 'missing' | 'different'
+  restorable: boolean
+  reason: string | null
+}
+
+export interface ManagerDiff {
+  managerId: string
+  detected: boolean
+  same: number
+  extra: number
+  entries: DiffEntry[]
+}
+
+export interface ManifestDiff {
+  manifestId: number
+  name: string
+  managers: ManagerDiff[]
+}

@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
   ManagerInfo,
+  ManifestDiff,
+  ManifestSummary,
   OperationLogEvent,
   OperationLogLine,
   OperationPlan,
@@ -44,5 +46,11 @@ export const api = {
   getDependencyManagers: () => invoke<DependencyManager[]>('get_dependency_managers'),
   getPackageDependencies: (managerId: string, name: string) =>
     invoke<PackageDependencies>('get_package_dependencies', { managerId, name }),
+  createManifest: (name: string) => invoke<ManifestSummary>('create_manifest', { name }),
+  listManifests: () => invoke<ManifestSummary[]>('list_manifests'),
+  exportManifest: (id: number, format: 'json' | 'yaml') => invoke<string>('export_manifest', { id, format }),
+  importManifest: (content: string) => invoke<ManifestSummary>('import_manifest', { content }),
+  deleteManifest: (id: number) => invoke<void>('delete_manifest', { id }),
+  diffManifest: (id: number) => invoke<ManifestDiff>('diff_manifest', { id }),
   onScanProgress: (cb: (p: ScanProgress) => void) => listen<ScanProgress>('scan-progress', (e) => cb(e.payload)),
 }

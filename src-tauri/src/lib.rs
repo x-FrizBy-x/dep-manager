@@ -3,6 +3,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod exec;
+pub mod manifest;
 pub mod model;
 pub mod ops;
 pub mod scanner;
@@ -57,6 +58,12 @@ pub fn run() {
             commands::get_package_details,
             commands::get_dependency_managers,
             commands::get_package_dependencies,
+            commands::create_manifest,
+            commands::list_manifests,
+            commands::export_manifest,
+            commands::import_manifest,
+            commands::delete_manifest,
+            commands::diff_manifest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running UniManage");

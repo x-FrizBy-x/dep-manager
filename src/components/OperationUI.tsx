@@ -71,14 +71,16 @@ export function BatchDialog({ ops }: { ops: Operations }) {
   if (!batch || batch.phase !== 'review') return null
   const warnings = [...new Set(batch.plans.flatMap((p) => p.warnings))]
   const n = batch.plans.length
+  const kinds = new Set(batch.plans.map((p) => p.kind))
+  const noun = kinds.size === 1 ? KIND_LABEL[batch.plans[0].kind].toLowerCase() : 'operation'
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onKeyDown={(e) => e.key === 'Escape' && ops.discardBatch()}>
       <div role="dialog" aria-modal="true" aria-labelledby="batch-title" className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border bg-card p-5 shadow-xl">
         <h2 id="batch-title" className="text-lg font-semibold">
-          Run {n} update{n === 1 ? '' : 's'}?
+          Run {n} {noun}{n === 1 ? '' : 's'}?
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          They run one at a time, in this order. A failure does not stop the rest; Cancel stops the batch.
+          They run one at a time, in this order. A failure does not stop the rest; Cancel stops the batch. Nothing is removed.
         </p>
         <ul className="mt-3 min-h-0 flex-1 space-y-2 overflow-auto">
           {batch.plans.map((p) => (
@@ -106,7 +108,7 @@ export function BatchDialog({ ops }: { ops: Operations }) {
             Cancel
           </Button>
           <Button onClick={() => void ops.confirmBatch()}>
-            Run {n} update{n === 1 ? '' : 's'}
+            Run {n} {noun}{n === 1 ? '' : 's'}
           </Button>
         </div>
       </div>

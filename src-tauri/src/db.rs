@@ -340,6 +340,33 @@ impl Db {
         Ok(())
     }
 
+    pub fn insert_manifest(&self, name: &str, platform: &str, content: &str) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO environment_manifests (name, platform, created_at, content) VALUES (?,?,?,?)",
+            params![name, platform, now(), content],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// `(id, created_at, content)` rows, newest first.
+    pub fn list_manifest_rows(&self) -> Result<Vec<(i64, i64, String)>> {
+        let mut st = self.conn.prepare("SELECT id, created_at, content FROM environment_manifests ORDER BY id DESC")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn manifest_row(&self, id: i64) -> Result<Option<(i64, String)>> {
+        Ok(self
+            .conn
+            .query_row("SELECT created_at, content FROM environment_manifests WHERE id=?", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?)
+    }
+
+    pub fn delete_manifest(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM environment_manifests WHERE id=?", [id])?;
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn setting(&self, key: &str) -> Result<Option<String>> {
         Ok(self

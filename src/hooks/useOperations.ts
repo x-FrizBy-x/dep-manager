@@ -34,7 +34,7 @@ export interface Batch {
 export interface Operations {
   /** Multi-package update in progress / awaiting review (Update Center). */
   batch: Batch | null
-  previewBatch: (items: { managerId: string; pkg: string }[]) => Promise<void>
+  previewBatch: (items: { managerId: string; pkg: string; kind?: OpKind; version?: string }[]) => Promise<void>
   /** Runs every previewed update sequentially. Only called from the confirm button. */
   confirmBatch: () => Promise<void>
   discardBatch: () => void
@@ -118,11 +118,11 @@ export function useOperations(onFinished: () => void): Operations {
     }
   }, [plan])
 
-  const previewBatch = useCallback(async (items: { managerId: string; pkg: string }[]) => {
+  const previewBatch = useCallback(async (items: { managerId: string; pkg: string; kind?: OpKind; version?: string }[]) => {
     setError(null)
     setPreviewing(true)
     try {
-      const plans = await Promise.all(items.map((i) => api.previewOperation(i.managerId, 'update', i.pkg)))
+      const plans = await Promise.all(items.map((i) => api.previewOperation(i.managerId, i.kind ?? 'update', i.pkg, i.version)))
       setBatch({ phase: 'review', plans, results: [], current: 0, stopped: false })
     } catch (e) {
       setError(String(e))

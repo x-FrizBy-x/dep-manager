@@ -17,6 +17,7 @@ import { useInventory } from '@/hooks/useInventory'
 import { useOperations } from '@/hooks/useOperations'
 import { cn } from '@/lib/utils'
 import { History as HistoryPage } from '@/pages/History'
+import { Backup } from '@/pages/Backup'
 import { Dependencies } from '@/pages/Dependencies'
 import { Explorer } from '@/pages/Explorer'
 import { Installed } from '@/pages/Installed'
@@ -31,7 +32,7 @@ const NAV: { id: PageId; label: string; icon: LucideIcon; ready: boolean }[] = [
   { id: 'updates', label: 'Updates', icon: Download, ready: true },
   { id: 'explorer', label: 'Package Explorer', icon: PackageSearch, ready: true },
   { id: 'graph', label: 'Dependencies', icon: GitFork, ready: true },
-  { id: 'backup', label: 'Environment Backup', icon: Boxes, ready: false },
+  { id: 'backup', label: 'Environment Backup', icon: Boxes, ready: true },
   { id: 'history', label: 'Operation History', icon: History, ready: true },
   { id: 'settings', label: 'Settings', icon: Settings, ready: false },
 ]
@@ -111,6 +112,8 @@ export default function App() {
             <Explorer ops={ops} onInstalledChange={ops.batch?.phase ?? ops.active?.record?.id ?? null} />
           ) : page === 'graph' ? (
             <Dependencies inv={inv} />
+          ) : page === 'backup' ? (
+            <Backup inv={inv} ops={ops} />
           ) : page === 'updates' ? (
             <Updates inv={inv} ops={ops} />
           ) : page === 'history' ? (
