@@ -54,9 +54,40 @@ pub struct OperationPlan {
     pub created_at: i64,
 }
 
-/// Managers that currently support write operations.
+/// Managers that currently support write operations. All of them work without
+/// elevated privileges (npm global prefix, pipx venvs, per-user Flatpak).
 pub fn supports_operations(manager_id: &str) -> bool {
-    manager_id == "npm"
+    matches!(manager_id, "npm" | "pipx" | "flatpak")
+}
+
+/// Whether an exact version can be requested at install time. Flatpak installs a
+/// branch, not a pinned version, so manifests restore it unpinned.
+pub fn supports_version_pin(manager_id: &str) -> bool {
+    matches!(manager_id, "npm" | "pipx")
+}
+
+/// Facts about the package taken from UniManage's own inventory (never from the caller).
+#[derive(Debug, Clone, Default)]
+pub struct PlanContext {
+    pub previous_version: Option<String>,
+    /// Flatpak: the remote that carries the package (resolved before install).
+    pub remote: Option<String>,
+    /// Flatpak: `user` or `system` as recorded by the scan.
+    pub scope: Option<String>,
+}
+
+/// PyPI-style project names: letters, digits, `.`, `_`, `-`; must start and end alphanumeric.
+pub fn validate_pipx_name(name: &str) -> Result<()> {
+    let ok = !name.is_empty()
+        && name.len() <= 100
+        && name.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && name.ends_with(|c: char| c.is_ascii_alphanumeric())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(AppError::Other(format!("invalid pipx package name `{name}`")))
+    }
 }
 
 /// npm package name rules (subset): optional `@scope/`, lowercase letters,
@@ -97,27 +128,17 @@ pub fn validate_version(v: &str) -> Result<()> {
     }
 }
 
-/// Builds a plan. Pure: runs nothing.
-pub fn plan_operation(
-    id: String,
-    now: i64,
-    manager_id: &str,
-    kind: OpKind,
-    package: &str,
-    version: Option<&str>,
-    previous_version: Option<&str>,
-) -> Result<OperationPlan> {
-    if !supports_operations(manager_id) {
-        return Err(AppError::Unsupported(format!(
-            "{manager_id}: write operations are not implemented for this manager yet"
-        )));
-    }
+/// program + argv + warnings for one (manager, operation). Pure.
+type Built = (&'static str, Vec<String>, Vec<String>);
+
+fn strs(a: &[&str]) -> Vec<String> {
+    a.iter().map(|s| s.to_string()).collect()
+}
+
+fn build_npm(kind: OpKind, package: &str, version: Option<&str>) -> Result<Built> {
     validate_npm_name(package)?;
-    if let Some(v) = version {
-        validate_version(v)?;
-    }
     let mut warnings = Vec::new();
-    let args: Vec<String> = match kind {
+    let args = match kind {
         OpKind::Install | OpKind::Update => {
             let target = version.unwrap_or("latest");
             vec!["install".into(), "-g".into(), "--no-fund".into(), "--no-audit".into(), format!("{package}@{target}")]
@@ -127,27 +148,121 @@ pub fn plan_operation(
                 return Err(AppError::Other("refusing to uninstall npm itself through UniManage".into()));
             }
             warnings.push("Packages that depend on this one are not checked; nothing else is removed.".into());
-            vec!["uninstall".into(), "-g".into(), package.into()]
+            strs(&["uninstall", "-g", package])
         }
     };
-    if kind == OpKind::Update && previous_version.is_none() {
-        warnings.push("Installed version is unknown.".into());
-    }
     if cfg!(unix) {
         warnings.push(
             "If the global npm prefix is root-owned this will fail with EACCES; UniManage will not escalate privileges."
                 .into(),
         );
     }
-    let command = format!("npm {}", args.join(" "));
+    Ok(("npm", args, warnings))
+}
+
+fn build_pipx(kind: OpKind, package: &str, version: Option<&str>, ctx: &PlanContext) -> Result<Built> {
+    validate_pipx_name(package)?;
+    let mut warnings = vec!["Cancelling can leave a partly created environment; the rescan shows the real state.".to_string()];
+    let args = match kind {
+        OpKind::Install => {
+            let mut a = strs(&["install"]);
+            if ctx.previous_version.is_some() {
+                // Already installed: pipx would refuse; --force reinstalls it at the requested version.
+                a.push("--force".into());
+                warnings.push("Already installed: --force reinstalls this package's environment.".into());
+            }
+            a.push(match version {
+                Some(v) => format!("{package}=={v}"),
+                None => package.to_string(),
+            });
+            a
+        }
+        OpKind::Update => {
+            if version.is_some() {
+                return Err(AppError::Other("pipx upgrade cannot target a version; install a pinned version instead".into()));
+            }
+            strs(&["upgrade", package])
+        }
+        OpKind::Uninstall => strs(&["uninstall", package]),
+    };
+    Ok(("pipx", args, warnings))
+}
+
+fn build_flatpak(kind: OpKind, package: &str, version: Option<&str>, ctx: &PlanContext) -> Result<Built> {
+    crate::adapters::flatpak::validate_app_id(package)?;
+    if version.is_some() {
+        return Err(AppError::Other("Flatpak installs a branch, not a pinned version; leave the version empty".into()));
+    }
+    // UniManage never escalates: only per-user installations are changed.
+    let mut warnings = vec!["Only the per-user Flatpak installation is changed (no root).".to_string()];
+    let args = match kind {
+        OpKind::Install => {
+            let remote = ctx.remote.as_deref().ok_or_else(|| AppError::Other("no Flatpak remote carries this app".into()))?;
+            if !crate::adapters::flatpak::validate_remote_name(remote) {
+                return Err(AppError::Other(format!("invalid Flatpak remote `{remote}`")));
+            }
+            warnings.push("Runtimes the app needs may be downloaded too; this can be large.".into());
+            strs(&["install", "--user", "--noninteractive", "-y", remote, package])
+        }
+        OpKind::Update | OpKind::Uninstall => {
+            match ctx.scope.as_deref() {
+                Some("user") => {}
+                Some(other) => {
+                    return Err(AppError::Other(format!(
+                        "{package} is installed for `{other}`; UniManage only changes per-user Flatpak installations because it never escalates privileges"
+                    )))
+                }
+                None => {
+                    return Err(AppError::Other(format!("cannot tell whether {package} is a per-user installation; rescan first")))
+                }
+            }
+            if kind == OpKind::Update {
+                strs(&["update", "--user", "--noninteractive", "-y", package])
+            } else {
+                warnings.push("Unused runtimes and the app's data in ~/.var are kept.".into());
+                strs(&["uninstall", "--user", "--noninteractive", "-y", package])
+            }
+        }
+    };
+    Ok(("flatpak", args, warnings))
+}
+
+/// Builds a plan. Pure: runs nothing.
+pub fn plan_operation(
+    id: String,
+    now: i64,
+    manager_id: &str,
+    kind: OpKind,
+    package: &str,
+    version: Option<&str>,
+    ctx: &PlanContext,
+) -> Result<OperationPlan> {
+    if !supports_operations(manager_id) {
+        return Err(AppError::Unsupported(format!(
+            "{manager_id}: write operations are not implemented for this manager yet"
+        )));
+    }
+    if let Some(v) = version {
+        validate_version(v)?;
+    }
+    let (program, args, mut warnings) = match manager_id {
+        "npm" => build_npm(kind, package, version)?,
+        "pipx" => build_pipx(kind, package, version, ctx)?,
+        "flatpak" => build_flatpak(kind, package, version, ctx)?,
+        other => return Err(AppError::Unsupported(format!("{other}: write operations are not implemented"))),
+    };
+    if kind == OpKind::Update && ctx.previous_version.is_none() {
+        warnings.push("Installed version is unknown.".into());
+    }
+    let command = format!("{program} {}", args.join(" "));
     Ok(OperationPlan {
         id,
         manager_id: manager_id.into(),
         kind,
         package: package.into(),
         version: version.map(String::from),
-        previous_version: previous_version.map(String::from),
-        program: "npm".into(),
+        previous_version: ctx.previous_version.clone(),
+        program: program.into(),
         args,
         command,
         requires_elevation: false,
@@ -156,7 +271,8 @@ pub fn plan_operation(
     })
 }
 
-pub const OP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Generous because a Flatpak runtime download can be large; the user can always cancel.
+pub const OP_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 fn lock(db: &Mutex<Db>) -> Result<std::sync::MutexGuard<'_, Db>> {
     db.lock().map_err(|_| AppError::Db("database lock poisoned".into()))
@@ -220,7 +336,7 @@ mod tests {
     use super::*;
 
     fn plan(kind: OpKind, pkg: &str, ver: Option<&str>) -> Result<OperationPlan> {
-        plan_operation("p1".into(), 0, "npm", kind, pkg, ver, Some("1.0.0"))
+        plan_operation("p1".into(), 0, "npm", kind, pkg, ver, &PlanContext { previous_version: Some("1.0.0".into()), ..Default::default() })
     }
 
     #[test]
@@ -309,7 +425,66 @@ mod tests {
         let p = plan(OpKind::Uninstall, "typescript", None).unwrap();
         assert_eq!(p.args, vec!["uninstall", "-g", "typescript"]);
         assert!(plan(OpKind::Uninstall, "npm", None).is_err());
-        assert!(plan_operation("x".into(), 0, "apt", OpKind::Update, "curl", None, None).is_err());
+        assert!(plan_operation("x".into(), 0, "apt", OpKind::Update, "curl", None, &PlanContext::default()).is_err());
         assert!(plan(OpKind::Install, "ok", Some("--force")).is_err());
+    }
+
+    fn plan_for(mgr: &str, kind: OpKind, pkg: &str, ver: Option<&str>, ctx: &PlanContext) -> Result<OperationPlan> {
+        plan_operation("p".into(), 0, mgr, kind, pkg, ver, ctx)
+    }
+
+    #[test]
+    fn pipx_plans() {
+        let none = PlanContext::default();
+        let p = plan_for("pipx", OpKind::Install, "black", None, &none).unwrap();
+        assert_eq!(p.program, "pipx");
+        assert_eq!(p.args, ["install", "black"]);
+        assert_eq!(plan_for("pipx", OpKind::Install, "black", Some("24.1.0"), &none).unwrap().args, ["install", "black==24.1.0"]);
+        let installed = PlanContext { previous_version: Some("23.0".into()), ..Default::default() };
+        assert_eq!(
+            plan_for("pipx", OpKind::Install, "black", Some("24.1.0"), &installed).unwrap().args,
+            ["install", "--force", "black==24.1.0"]
+        );
+        assert_eq!(plan_for("pipx", OpKind::Update, "black", None, &installed).unwrap().args, ["upgrade", "black"]);
+        assert!(plan_for("pipx", OpKind::Update, "black", Some("1.0"), &installed).is_err());
+        assert_eq!(plan_for("pipx", OpKind::Uninstall, "black", None, &installed).unwrap().args, ["uninstall", "black"]);
+        for bad in ["", "-x", "--pip-args=evil", "a b", "a;b", "git+https://x/y", "../x", "a/b", "x-", ".x", "$(x)"] {
+            assert!(plan_for("pipx", OpKind::Install, bad, None, &none).is_err(), "{bad}");
+        }
+        assert!(plan_for("pipx", OpKind::Install, "black", Some("--force"), &none).is_err());
+    }
+
+    #[test]
+    fn flatpak_plans_are_per_user_only() {
+        let user = PlanContext { previous_version: Some("1".into()), scope: Some("user".into()), ..Default::default() };
+        let sys = PlanContext { scope: Some("system".into()), ..Default::default() };
+        let id = "org.mozilla.firefox";
+        assert_eq!(
+            plan_for("flatpak", OpKind::Update, id, None, &user).unwrap().args,
+            ["update", "--user", "--noninteractive", "-y", id]
+        );
+        assert_eq!(
+            plan_for("flatpak", OpKind::Uninstall, id, None, &user).unwrap().args,
+            ["uninstall", "--user", "--noninteractive", "-y", id]
+        );
+        assert!(plan_for("flatpak", OpKind::Update, id, None, &sys).is_err(), "system installs are refused, not escalated");
+        assert!(plan_for("flatpak", OpKind::Uninstall, id, None, &PlanContext::default()).is_err());
+        let with_remote = PlanContext { remote: Some("flathub".into()), ..Default::default() };
+        let p = plan_for("flatpak", OpKind::Install, id, None, &with_remote).unwrap();
+        assert_eq!(p.args, ["install", "--user", "--noninteractive", "-y", "flathub", id]);
+        assert!(!p.requires_elevation);
+        assert!(plan_for("flatpak", OpKind::Install, id, None, &PlanContext::default()).is_err());
+        assert!(plan_for("flatpak", OpKind::Install, id, Some("1.0"), &with_remote).is_err());
+        for bad in ["firefox", "-org.x", "org.x;rm", "org.x y", "org..x"] {
+            assert!(plan_for("flatpak", OpKind::Install, bad, None, &with_remote).is_err(), "{bad}");
+        }
+        let evil = PlanContext { remote: Some("--system".into()), ..Default::default() };
+        assert!(plan_for("flatpak", OpKind::Install, id, None, &evil).is_err());
+    }
+
+    #[test]
+    fn capabilities() {
+        assert!(supports_operations("pipx") && supports_operations("flatpak") && !supports_operations("apt"));
+        assert!(supports_version_pin("npm") && supports_version_pin("pipx") && !supports_version_pin("flatpak"));
     }
 }

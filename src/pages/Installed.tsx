@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { Inventory } from '@/hooks/useInventory'
-import { OPERABLE_MANAGERS, type Operations } from '@/hooks/useOperations'
+import { OPERABLE_MANAGERS, VERSION_PINNABLE, type Operations } from '@/hooks/useOperations'
 import { emptyFilters, filterPackages, sortPackages, type Filters, type SortKey } from '@/lib/inventory'
 import type { Pkg } from '@/lib/types'
 
@@ -62,6 +62,11 @@ function Detail({ p, onClose, ops }: { p: Pkg; onClose: () => void; ops: Operati
               Update to {p.latestVersion}
             </Button>
           )}
+          {p.updateStatus === 'unknown' && p.packageManager === 'pipx' && (
+            <Button size="sm" disabled={ops.busy} onClick={() => void ops.preview(p.packageManager, 'update', p.name)}>
+              Upgrade (pipx checks, then upgrades if newer)
+            </Button>
+          )}
           {p.name !== 'npm' && (
             <Button size="sm" variant="outline" disabled={ops.busy} onClick={() => void ops.preview(p.packageManager, 'uninstall', p.name)}>
               Uninstall
@@ -76,31 +81,48 @@ function Detail({ p, onClose, ops }: { p: Pkg; onClose: () => void; ops: Operati
   )
 }
 
-function InstallForm({ ops }: { ops: Operations }) {
+const INSTALL_LABEL: Record<string, string> = { npm: 'npm (global)', pipx: 'pipx', flatpak: 'Flatpak (per-user)' }
+
+function InstallForm({ ops, managers }: { ops: Operations; managers: string[] }) {
+  const options = managers.filter((m) => OPERABLE_MANAGERS.has(m))
+  const [manager, setManager] = useState('')
   const [name, setName] = useState('')
   const [version, setVersion] = useState('')
+  const chosen = options.includes(manager) ? manager : (options[0] ?? '')
+  if (options.length === 0) return null
+  const pin = VERSION_PINNABLE.has(chosen)
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     const n = name.trim()
-    if (n) void ops.preview('npm', 'install', n, version.trim() || undefined)
+    if (n && chosen) void ops.preview(chosen, 'install', n, pin ? version.trim() || undefined : undefined)
   }
+  const hint = chosen === 'flatpak' ? 'app id (e.g. org.gnome.Calculator)' : chosen === 'pipx' ? 'package (e.g. black)' : 'package (e.g. typescript)'
   return (
-    <form onSubmit={submit} className="flex items-center gap-2 border-b bg-card/50 px-3 py-2" aria-label="Install npm package">
+    <form onSubmit={submit} className="flex items-center gap-2 border-b bg-card/50 px-3 py-2" aria-label="Install package">
       <Plus className="size-4 text-muted-foreground" aria-hidden />
+      <select aria-label="Install with" className="h-8 rounded-md border bg-background px-2 text-xs" value={chosen} onChange={(e) => setManager(e.target.value)}>
+        {options.map((m) => (
+          <option key={m} value={m}>
+            {INSTALL_LABEL[m] ?? m}
+          </option>
+        ))}
+      </select>
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="Install global npm package (e.g. typescript)"
-        aria-label="npm package name"
+        placeholder={`Install ${hint}`}
+        aria-label="Package name"
         className="h-8 min-w-48 flex-1 rounded-md border bg-background px-2 font-mono text-xs focus-visible:outline-2"
       />
-      <input
-        value={version}
-        onChange={(e) => setVersion(e.target.value)}
-        placeholder="version (optional)"
-        aria-label="Version or tag"
-        className="h-8 w-36 rounded-md border bg-background px-2 font-mono text-xs focus-visible:outline-2"
-      />
+      {pin && (
+        <input
+          value={version}
+          onChange={(e) => setVersion(e.target.value)}
+          placeholder="version (optional)"
+          aria-label="Version or tag"
+          className="h-8 w-36 rounded-md border bg-background px-2 font-mono text-xs focus-visible:outline-2"
+        />
+      )}
       <Button type="submit" size="sm" disabled={ops.busy || !name.trim()}>
         Preview install
       </Button>
@@ -123,6 +145,7 @@ export function Installed({ inv, ops }: { inv: Inventory; ops: Operations }) {
   const [filters, setFilters] = useState<Filters>(emptyFilters)
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' })
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const detectedManagers = useMemo(() => inv.managers.filter((m) => m.detected).map((m) => m.id), [inv.managers])
 
   const rows = useMemo(
     () => sortPackages(filterPackages(inv.packages, filters), sort.key, sort.dir),
@@ -137,7 +160,7 @@ export function Installed({ inv, ops }: { inv: Inventory; ops: Operations }) {
   if (inv.packages.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 p-16 text-center">
-        <InstallForm ops={ops} />
+        <InstallForm ops={ops} managers={detectedManagers} />
         <div className="font-medium">No packages yet</div>
         <p className="max-w-sm text-sm text-muted-foreground">
           Go to Overview and run a scan to build your software inventory.
@@ -149,7 +172,7 @@ export function Installed({ inv, ops }: { inv: Inventory; ops: Operations }) {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
-        <InstallForm ops={ops} />
+        <InstallForm ops={ops} managers={detectedManagers} />
         <div className="flex flex-wrap items-center gap-2 border-b p-3">
           <div className="relative min-w-48 flex-1">
             <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" aria-hidden />

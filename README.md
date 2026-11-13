@@ -4,7 +4,7 @@ A unified, **safety-first** management layer over existing package managers (Tau
 
 ## Status
 
-Read-only inventory for eight managers; writes (install / update / uninstall) for **npm global packages only**. Linux is the target platform; the dev machine is Windows, so only npm has been exercised end to end in the running app. On Linux (Ubuntu in WSL) the whole backend test suite passes and the real adapters have been run against live apt, snap, flatpak and npm via `cargo test --test real_system -- --ignored --nocapture` (the desktop window itself has not been opened on Linux).
+Read-only inventory for eight managers; writes (install / update / uninstall) for **npm global packages, pipx and per-user Flatpak**. Linux is the target platform; the dev machine is Windows, so only npm has been exercised end to end in the running app. On Linux (Ubuntu in WSL) the whole backend test suite passes and the real adapters have been run against live apt, snap, flatpak and npm via `cargo test --test real_system -- --ignored --nocapture` (the desktop window itself has not been opened on Linux).
 
 | Area | State |
 |---|---|
@@ -19,7 +19,8 @@ Read-only inventory for eight managers; writes (install / update / uninstall) fo
 | Environment Backup | manifests per manager (stored in SQLite), JSON and YAML export, JSON import with validation, diff against the last scan, restore through the normal preview/confirm flow (npm only). No exact-reproduction guarantee; nothing is ever removed |
 | Project Dependencies | read-only: declared deps from a folder's package.json (+ package-lock.json, node_modules), requirements.txt, pyproject.toml (PEP 621/735, Poetry) and Cargo.toml (+ Cargo.lock); other manifests are listed as unsupported. Never runs anything in the project; separate from global packages |
 | Settings + background rescan | theme (system/light/dark) and an opt-in, off-by-default periodic read-only rescan (15 min to daily) while the app is open; Overview shows needs-attention, recently seen and recent operations; Installed has an apt install-reason filter |
-| Install / update / remove for APT, Snap, Flatpak, pipx, uv, mise, pnpm | **not implemented** (no privilege-escalation design yet) |
+| Install / update / remove for pipx and per-user Flatpak | done; run against real pipx 1.8 and Flatpak 1.16 on Ubuntu (WSL) via `cargo test --test real_ops`. System-wide Flatpak installs are refused (no privilege escalation); Flatpak installs a branch, not a pinned version |
+| Install / update / remove for APT, Snap, uv, mise, pnpm | **not implemented** (apt/snap need a privilege-escalation design) |
 
 Design rules in force: no shell (argument arrays only), strict validation of every user-supplied token, nothing modifies the system without a preview and explicit confirmation, one operation at a time and never during a scan, no privilege escalation, no password handling, no automatic dependency removal, nothing is merged across managers by name alone.
 

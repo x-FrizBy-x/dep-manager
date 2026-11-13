@@ -137,7 +137,7 @@ export function Explorer({ ops, onInstalledChange }: { ops: Operations; onInstal
   if (managers && managers.length === 0) {
     return (
       <div className="p-12 text-center text-sm text-muted-foreground">
-        No searchable package managers were found on this machine (search is implemented for npm and APT).
+        No searchable package managers were found on this machine (search is implemented for npm, APT, Snap and Flatpak).
       </div>
     )
   }

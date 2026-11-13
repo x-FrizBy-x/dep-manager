@@ -84,7 +84,7 @@ pub(crate) fn validate_app_id(id: &str) -> Result<()> {
     }
 }
 
-fn validate_remote_name(n: &str) -> bool {
+pub(crate) fn validate_remote_name(n: &str) -> bool {
     !n.is_empty() && !n.starts_with('-') && n.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 

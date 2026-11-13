@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { Inventory } from '@/hooks/useInventory'
-import type { Operations } from '@/hooks/useOperations'
+import { VERSION_PINNABLE, type Operations } from '@/hooks/useOperations'
 import { api } from '@/lib/api'
 import { resultTone } from '@/lib/operations'
 import type { DiffEntry, ManifestDiff, ManifestSummary } from '@/lib/types'
@@ -100,7 +100,7 @@ export function Backup({ inv, ops }: { inv: Inventory; ops: Operations }) {
       <p className="mb-3 text-sm text-muted-foreground">
         A manifest records what each package manager has installed (apt: manually installed only; runtimes skipped). It is not an exact
         reproduction guarantee, and restoring never removes anything. Restore is available only for managers with an install pipeline
-        (npm today); every restore goes through the usual preview and confirmation.
+        (npm, pipx and per-user Flatpak; Flatpak restores the app, not a pinned version); every restore goes through the usual preview and confirmation.
       </p>
 
       {error && (
@@ -244,7 +244,7 @@ export function Backup({ inv, ops }: { inv: Inventory; ops: Operations }) {
                   disabled={chosen.length === 0 || ops.busy}
                   onClick={() =>
                     void ops.previewBatch(
-                      chosen.map((e) => ({ managerId: e.managerId, pkg: e.name, kind: 'install', version: e.wantedVersion ?? undefined })),
+                      chosen.map((e) => ({ managerId: e.managerId, pkg: e.name, kind: 'install', version: VERSION_PINNABLE.has(e.managerId) ? (e.wantedVersion ?? undefined) : undefined })),
                     )
                   }
                 >

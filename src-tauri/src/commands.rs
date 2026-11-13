@@ -108,22 +108,39 @@ pub fn get_scan_history(state: State<'_, AppState>, limit: Option<u32>) -> Resul
 const PLAN_TTL_SECS: i64 = 600;
 
 #[tauri::command]
-pub fn preview_operation(
+pub async fn preview_operation(
     state: State<'_, AppState>,
     manager_id: String,
     kind: OpKind,
     package: String,
     version: Option<String>,
 ) -> Result<OperationPlan> {
-    // The previous version comes from our own inventory, not from the caller.
-    let previous = with_db(&state, |d| d.list_packages())?
+    // Everything about the installed package comes from our own inventory, not from the caller.
+    let local = with_db(&state, |d| d.list_packages())?
         .into_iter()
-        .find(|p| p.package_manager == manager_id && p.name == package)
-        .and_then(|p| p.version);
+        .find(|p| p.package_manager == manager_id && p.name == package);
+    let mut ctx = ops::PlanContext {
+        previous_version: local.as_ref().and_then(|p| p.version.clone()),
+        scope: local.as_ref().and_then(|p| p.metadata.get("installation").cloned()),
+        remote: None,
+    };
+    if manager_id == "flatpak" && kind == OpKind::Install {
+        // Find which remote carries the app (also proves it exists) before building the command.
+        let pkg = package.clone();
+        ctx.remote = tauri::async_runtime::spawn_blocking(move || {
+            adapters::all()
+                .into_iter()
+                .find(|a| a.id() == "flatpak")
+                .and_then(|a| a.details(&SystemRunner::default(), &pkg).ok())
+                .and_then(|d| d.metadata.get("remote").cloned())
+        })
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    }
     let now = crate::db::now();
     let n = state.plan_counter.fetch_add(1, Ordering::Relaxed);
     let id = format!("plan-{now}-{n}");
-    let plan = ops::plan_operation(id.clone(), now, &manager_id, kind, &package, version.as_deref(), previous.as_deref())?;
+    let plan = ops::plan_operation(id.clone(), now, &manager_id, kind, &package, version.as_deref(), &ctx)?;
     let mut plans = state.plans.lock().map_err(|_| AppError::Other("plan lock poisoned".into()))?;
     plans.retain(|_, p| now - p.created_at < PLAN_TTL_SECS);
     plans.insert(id, plan.clone());
