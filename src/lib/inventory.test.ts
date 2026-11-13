@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyFilters, filterPackages, sortPackages } from './inventory'
+import { emptyFilters, filterPackages, packagesNeedingAttention, recentlySeen, sortPackages } from './inventory'
 import type { Pkg } from './types'
 
 const mk = (over: Partial<Pkg>): Pkg => ({
@@ -24,6 +24,7 @@ const mk = (over: Partial<Pkg>): Pkg => ({
   dependencies: [],
   metadata: {},
   alsoFoundIn: [],
+  firstSeenAt: null,
   ...over,
 })
 
@@ -62,5 +63,44 @@ describe('sortPackages', () => {
       'version',
     )
     expect(v.map((p) => p.name)).toEqual(['b', 'a', 'c'])
+  })
+})
+
+describe('install reason filter', () => {
+  const pk = [
+    mk({ name: 'curl', metadata: { installReason: 'manual' } }),
+    mk({ name: 'libcurl', metadata: { installReason: 'automatic' } }),
+    mk({ name: 'ruff' }),
+  ]
+  it('keeps only the requested reason', () => {
+    expect(filterPackages(pk, { ...emptyFilters, reason: 'manual' }).map((p) => p.name)).toEqual(['curl'])
+    expect(filterPackages(pk, { ...emptyFilters, reason: 'automatic' }).map((p) => p.name)).toEqual(['libcurl'])
+    expect(filterPackages(pk, emptyFilters)).toHaveLength(3)
+  })
+})
+
+describe('overview helpers', () => {
+  it('ranks updates by size of the version jump and respects the limit', () => {
+    const pk = [
+      mk({ name: 'a', updateStatus: 'available', version: '1.0.0', latestVersion: '1.0.1' }),
+      mk({ name: 'b', updateStatus: 'available', version: '1.0.0', latestVersion: '2.0.0' }),
+      mk({ name: 'c', updateStatus: 'available', version: '1.0.0', latestVersion: '1.2.0' }),
+      mk({ name: 'd', updateStatus: 'up_to_date' }),
+    ]
+    expect(packagesNeedingAttention(pk).map((p) => p.name)).toEqual(['b', 'c', 'a'])
+    expect(packagesNeedingAttention(pk, 1)).toHaveLength(1)
+  })
+
+  it('never reports the initial inventory as recently seen', () => {
+    const t = 1_000_000
+    const pk = [
+      mk({ name: 'old1', firstSeenAt: t }),
+      mk({ name: 'old2', firstSeenAt: t + 20 }),
+      mk({ name: 'new1', firstSeenAt: t + 86_400 }),
+      mk({ name: 'new2', firstSeenAt: t + 2 * 86_400 }),
+      mk({ name: 'unknown', firstSeenAt: null }),
+    ]
+    expect(recentlySeen(pk).map((p) => p.name)).toEqual(['new2', 'new1'])
+    expect(recentlySeen([])).toEqual([])
   })
 })

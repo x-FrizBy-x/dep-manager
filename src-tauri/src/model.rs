@@ -62,6 +62,8 @@ pub struct Package {
     /// Other managers that report a package with the same normalized name.
     /// Rows are never merged: this only surfaces the overlap.
     pub also_found_in: Vec<String>,
+    /// When UniManage first saw this package (unix seconds). Not the install date.
+    pub first_seen_at: Option<i64>,
 }
 
 impl Package {
@@ -88,6 +90,7 @@ impl Package {
             dependencies: Vec::new(),
             metadata: BTreeMap::new(),
             also_found_in: Vec::new(),
+            first_seen_at: None,
         }
     }
 }

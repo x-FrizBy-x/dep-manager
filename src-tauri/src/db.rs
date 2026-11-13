@@ -217,6 +217,7 @@ impl Db {
             p.management_status = parse_enum(&r.get::<_, String>(15)?).unwrap_or(ManagementStatus::Unknown);
             p.homepage = r.get(16)?;
             p.license = r.get(17)?;
+            p.first_seen_at = r.get(18)?;
             Ok(p)
         })?;
         let mut pkgs = Vec::new();
@@ -365,6 +366,30 @@ impl Db {
     pub fn delete_manifest(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM environment_manifests WHERE id=?", [id])?;
         Ok(())
+    }
+
+    pub fn settings(&self) -> Result<crate::settings::Settings> {
+        let mut st = self.conn.prepare("SELECT key, value FROM application_settings")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let rows = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(crate::settings::Settings::from_rows(&rows))
+    }
+
+    pub fn save_settings(&self, s: &crate::settings::Settings) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for (k, v) in s.to_rows() {
+            tx.execute(
+                "INSERT INTO application_settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=?2",
+                params![k, v],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Start time of the most recent scan of any kind, if any.
+    pub fn last_scan_started(&self) -> Result<Option<i64>> {
+        Ok(self.conn.query_row("SELECT MAX(started_at) FROM scan_history", [], |r| r.get(0))?)
     }
 
     #[allow(dead_code)]

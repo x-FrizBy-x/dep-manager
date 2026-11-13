@@ -7,6 +7,7 @@ pub mod manifest;
 pub mod model;
 pub mod ops;
 pub mod scanner;
+pub mod settings;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -41,6 +42,7 @@ pub fn run() {
                 plans: Mutex::new(HashMap::new()),
                 plan_counter: AtomicU64::new(0),
             });
+            commands::spawn_background_rescan(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -64,6 +66,8 @@ pub fn run() {
             commands::import_manifest,
             commands::delete_manifest,
             commands::diff_manifest,
+            commands::get_settings,
+            commands::save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running UniManage");

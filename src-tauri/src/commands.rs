@@ -8,7 +8,7 @@ use crate::model::{DependencyManager, ManagerInfo, Package, PackageDependencies,
 use crate::ops::{self, OpKind, OperationPlan};
 use crate::{adapters, scanner, AppState};
 use std::sync::atomic::Ordering;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 fn with_db<T>(state: &AppState, f: impl FnOnce(&crate::db::Db) -> Result<T>) -> Result<T> {
     let db = state.db.lock().map_err(|_| AppError::Db("database lock poisoned".into()))?;
@@ -23,28 +23,69 @@ impl Drop for FlagReset {
     }
 }
 
-#[tauri::command]
-pub async fn start_scan(app: AppHandle, state: State<'_, AppState>, check_updates: Option<bool>) -> Result<ScanRecord> {
+/// Runs one scan on the calling (blocking) thread. Shared by the manual and the
+/// background scan. Refuses to overlap another scan or a running operation.
+fn perform_scan(app: &AppHandle, state: &AppState, check_updates: bool) -> Result<ScanRecord> {
     if state.scanning.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
         return Err(AppError::Other("a scan is already running".into()));
     }
+    // Resets the flag even if scanning panics or returns early.
+    let _reset = FlagReset(state.scanning.clone());
     if state.op_running.load(Ordering::Acquire) {
-        state.scanning.store(false, Ordering::Release);
         return Err(AppError::Other("an operation is running; scan after it finishes".into()));
     }
-    let (db, flag) = (state.db.clone(), state.scanning.clone());
-    let res = tauri::async_runtime::spawn_blocking(move || {
-        let adapters = adapters::all();
-        let runner = SystemRunner::default();
-        // Resets the flag even if scanning panics.
-        let _reset = FlagReset(flag);
-        scanner::scan_all(&adapters, &runner, &db, check_updates.unwrap_or(true), &|p| {
-            let _ = app.emit("scan-progress", p);
-        })
+    let adapters = adapters::all();
+    let runner = SystemRunner::default();
+    let rec = scanner::scan_all(&adapters, &runner, &state.db, check_updates, &|p| {
+        let _ = app.emit("scan-progress", p);
+    })?;
+    let _ = app.emit("scan-finished", &rec);
+    Ok(rec)
+}
+
+#[tauri::command]
+pub async fn start_scan(app: AppHandle, state: State<'_, AppState>, check_updates: Option<bool>) -> Result<ScanRecord> {
+    let _ = &state;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        perform_scan(&app, &state, check_updates.unwrap_or(true))
     })
     .await
-    .map_err(|e| AppError::Other(e.to_string()))?;
-    res
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// Checks every 30 s whether a background rescan is due according to the saved
+/// settings (off by default). Scans are read-only and never overlap a manual
+/// scan or an operation.
+pub fn spawn_background_rescan(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        let state = app.state::<AppState>();
+        let due = state
+            .db
+            .lock()
+            .ok()
+            .and_then(|d| Some((d.settings().ok()?, d.last_scan_started().ok()?)))
+            .filter(|(s, last)| crate::settings::rescan_due(s, *last, crate::db::now()));
+        if let Some((s, _)) = due {
+            // Overlap with a manual scan or an operation is simply skipped until the next tick.
+            let _ = perform_scan(&app, &state, s.rescan_check_updates);
+        }
+    });
+}
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Result<crate::settings::Settings> {
+    with_db(&state, |d| d.settings())
+}
+
+#[tauri::command]
+pub fn save_settings(state: State<'_, AppState>, settings: crate::settings::Settings) -> Result<crate::settings::Settings> {
+    settings.validate()?;
+    with_db(&state, |d| {
+        d.save_settings(&settings)?;
+        d.settings()
+    })
 }
 
 #[tauri::command]

@@ -1,3 +1,4 @@
+import { updateSeverity } from './severity'
 import type { Pkg } from './types'
 
 export type SortKey = 'name' | 'version' | 'update'
@@ -8,9 +9,11 @@ export interface Filters {
   update: '' | 'available' | 'up_to_date' | 'unknown'
   kind: '' | Pkg['kind']
   management: '' | Pkg['managementStatus']
+  /** apt only: how the package got installed (`installReason` metadata). */
+  reason: '' | 'manual' | 'automatic'
 }
 
-export const emptyFilters: Filters = { query: '', manager: '', update: '', kind: '', management: '' }
+export const emptyFilters: Filters = { query: '', manager: '', update: '', kind: '', management: '', reason: '' }
 
 export function filterPackages(pkgs: Pkg[], f: Filters): Pkg[] {
   const q = f.query.trim().toLowerCase()
@@ -23,7 +26,8 @@ export function filterPackages(pkgs: Pkg[], f: Filters): Pkg[] {
       (!f.manager || p.packageManager === f.manager) &&
       (!f.update || p.updateStatus === f.update) &&
       (!f.kind || p.kind === f.kind) &&
-      (!f.management || p.managementStatus === f.management),
+      (!f.management || p.managementStatus === f.management) &&
+      (!f.reason || p.metadata.installReason === f.reason),
   )
 }
 
@@ -51,4 +55,33 @@ export function sortPackages(pkgs: Pkg[], key: SortKey, dir: 'asc' | 'desc' = 'a
 
 export function formatTimestamp(secs: number | null): string {
   return secs === null ? '—' : new Date(secs * 1000).toLocaleString()
+}
+
+const SEVERITY_RANK = { major: 0, minor: 1, patch: 2, unknown: 3 } as const
+
+/** Packages with an update available, biggest version jump first (from version numbers only). */
+export function packagesNeedingAttention(pkgs: Pkg[], limit = 5): Pkg[] {
+  return pkgs
+    .filter((p) => p.updateStatus === 'available')
+    .sort(
+      (a, b) =>
+        SEVERITY_RANK[updateSeverity(a.version, a.latestVersion)] - SEVERITY_RANK[updateSeverity(b.version, b.latestVersion)] ||
+        a.name.localeCompare(b.name),
+    )
+    .slice(0, limit)
+}
+
+/**
+ * Packages that first appeared after the initial inventory, newest first. This is
+ * "first seen by UniManage", not an install date: packages from the very first
+ * scan are never reported (they would all look new).
+ */
+export function recentlySeen(pkgs: Pkg[], limit = 5): Pkg[] {
+  const times = pkgs.map((p) => p.firstSeenAt).filter((t): t is number => t !== null)
+  if (times.length === 0) return []
+  const baseline = Math.min(...times) + 300 // the first scan finishes within minutes
+  return pkgs
+    .filter((p) => p.firstSeenAt !== null && p.firstSeenAt > baseline)
+    .sort((a, b) => (b.firstSeenAt ?? 0) - (a.firstSeenAt ?? 0))
+    .slice(0, limit)
 }

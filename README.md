@@ -17,7 +17,7 @@ Read-only inventory for eight managers; writes (install / update / uninstall) fo
 | Package Explorer: search + details | npm, APT, Snap and Flatpak (all but npm are read-only: no install); snap/flatpak parsers tested on real Ubuntu (WSL) output, not yet run in the app |
 | Dependencies page | per-manager dependency lists for npm and APT (read-only) |
 | Environment Backup | manifests per manager (stored in SQLite), JSON and YAML export, JSON import with validation, diff against the last scan, restore through the normal preview/confirm flow (npm only). No exact-reproduction guarantee; nothing is ever removed |
-| Settings, background rescans | **not implemented** (nav item shows "Soon") |
+| Settings + background rescan | theme (system/light/dark) and an opt-in, off-by-default periodic read-only rescan (15 min to daily) while the app is open; Overview shows needs-attention, recently seen and recent operations; Installed has an apt install-reason filter |
 | Install / update / remove for APT, Snap, Flatpak, pipx, uv, mise, pnpm | **not implemented** (no privilege-escalation design yet) |
 
 Design rules in force: no shell (argument arrays only), strict validation of every user-supplied token, nothing modifies the system without a preview and explicit confirmation, one operation at a time and never during a scan, no privilege escalation, no password handling, no automatic dependency removal, nothing is merged across managers by name alone.

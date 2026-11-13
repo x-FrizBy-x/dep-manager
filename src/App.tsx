@@ -17,6 +17,7 @@ import { useInventory } from '@/hooks/useInventory'
 import { useOperations } from '@/hooks/useOperations'
 import { cn } from '@/lib/utils'
 import { History as HistoryPage } from '@/pages/History'
+import { SettingsPage, type ThemePref } from '@/pages/Settings'
 import { Backup } from '@/pages/Backup'
 import { Dependencies } from '@/pages/Dependencies'
 import { Explorer } from '@/pages/Explorer'
@@ -34,33 +35,43 @@ const NAV: { id: PageId; label: string; icon: LucideIcon; ready: boolean }[] = [
   { id: 'graph', label: 'Dependencies', icon: GitFork, ready: true },
   { id: 'backup', label: 'Environment Backup', icon: Boxes, ready: true },
   { id: 'history', label: 'Operation History', icon: History, ready: true },
-  { id: 'settings', label: 'Settings', icon: Settings, ready: false },
+  { id: 'settings', label: 'Settings', icon: Settings, ready: true },
 ]
 
 function useTheme() {
-  const [dark, setDark] = useState(() => {
+  const [pref, setPref] = useState<ThemePref>(() => {
     try {
-      const s = localStorage.getItem('theme')
-      if (s) return s === 'dark'
+      const s = localStorage.getItem('theme-pref')
+      if (s === 'light' || s === 'dark' || s === 'system') return s
+      const old = localStorage.getItem('theme') // written by earlier versions
+      if (old === 'light' || old === 'dark') return old
     } catch {
       /* storage unavailable */
     }
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
+    return 'system'
   })
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const on = (e: MediaQueryListEvent) => setSystemDark(e.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  const dark = pref === 'system' ? systemDark : pref === 'dark'
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
     try {
-      localStorage.setItem('theme', dark ? 'dark' : 'light')
+      localStorage.setItem('theme-pref', pref)
     } catch {
       /* storage unavailable */
     }
-  }, [dark])
-  return [dark, () => setDark((d) => !d)] as const
+  }, [dark, pref])
+  return { dark, pref, setPref }
 }
 
 export default function App() {
   const [page, setPage] = useState<PageId>('overview')
-  const [dark, toggleTheme] = useTheme()
+  const { dark, pref, setPref } = useTheme()
   const inv = useInventory()
   const ops = useOperations(() => void inv.reload())
 
@@ -91,7 +102,7 @@ export default function App() {
             </li>
           ))}
         </ul>
-        <Button variant="ghost" size="sm" onClick={toggleTheme} aria-label="Toggle theme" className="justify-start">
+        <Button variant="ghost" size="sm" onClick={() => setPref(dark ? 'light' : 'dark')} aria-label="Toggle theme" className="justify-start">
           {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
           {dark ? 'Light theme' : 'Dark theme'}
         </Button>
@@ -112,6 +123,8 @@ export default function App() {
             <Explorer ops={ops} onInstalledChange={ops.batch?.phase ?? ops.active?.record?.id ?? null} />
           ) : page === 'graph' ? (
             <Dependencies inv={inv} />
+          ) : page === 'settings' ? (
+            <SettingsPage theme={pref} onTheme={setPref} />
           ) : page === 'backup' ? (
             <Backup inv={inv} ops={ops} />
           ) : page === 'updates' ? (
@@ -119,7 +132,7 @@ export default function App() {
           ) : page === 'history' ? (
             <HistoryPage refreshKey={ops.active?.record?.id ?? null} />
           ) : (
-            <div className="p-6"><Overview inv={inv} /></div>
+            <div className="p-6"><Overview inv={inv} refreshKey={ops.active?.record?.id ?? null} onOpen={(p) => setPage(p)} /></div>
           )}
         </div>
         <OperationConsole ops={ops} />

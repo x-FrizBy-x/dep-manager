@@ -56,13 +56,19 @@ export function useInventory(): Inventory {
     if (!inTauri()) return
     let unlisten: (() => void) | undefined
     let cancelled = false
+    let unlistenDone: (() => void) | undefined
     api.onScanProgress(setProgress).then((u) => (cancelled ? u() : (unlisten = u)))
+    // Background rescans finish without the UI asking for them.
+    api
+      .onScanFinished(() => void reload().catch((e) => setError(String(e))))
+      .then((u) => (cancelled ? u() : (unlistenDone = u)))
     reload()
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))
     return () => {
       cancelled = true
       unlisten?.()
+      unlistenDone?.()
     }
   }, [reload])
 

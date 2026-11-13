@@ -1,8 +1,13 @@
+import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CheckCircle2, CircleSlash, Package, RefreshCw, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { Inventory } from '@/hooks/useInventory'
-import { formatTimestamp } from '@/lib/inventory'
+import { api } from '@/lib/api'
+import { formatTimestamp, packagesNeedingAttention, recentlySeen } from '@/lib/inventory'
+import { resultTone } from '@/lib/operations'
+import { updateSeverity } from '@/lib/severity'
+import type { OperationRecord } from '@/lib/types'
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -14,8 +19,23 @@ function Stat({ label, value, hint }: { label: string; value: string | number; h
   )
 }
 
-export function Overview({ inv }: { inv: Inventory }) {
+type NavTarget = 'updates' | 'history' | 'installed'
+
+export function Overview({ inv, refreshKey, onOpen }: { inv: Inventory; refreshKey: unknown; onOpen: (p: NavTarget) => void }) {
   const { packages, managers, lastScan, scanning, progress } = inv
+  const [recentOps, setRecentOps] = useState<OperationRecord[]>([])
+  useEffect(() => {
+    let off = false
+    api
+      .getOperations(5)
+      .then((o) => !off && setRecentOps(o))
+      .catch(() => !off && setRecentOps([]))
+    return () => {
+      off = true
+    }
+  }, [refreshKey])
+  const attention = useMemo(() => packagesNeedingAttention(packages), [packages])
+  const fresh = useMemo(() => recentlySeen(packages), [packages])
   const detected = managers.filter((m) => m.detected)
   const updates = packages.filter((p) => p.updateStatus === 'available').length
   const failed = managers.filter((m) => m.lastError)
@@ -99,6 +119,76 @@ export function Overview({ inv }: { inv: Inventory }) {
               ))}
             </ul>
           </section>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <section aria-labelledby="attn" className="rounded-lg border bg-card p-4">
+              <h2 id="attn" className="mb-2 text-sm font-medium">
+                Needs attention
+              </h2>
+              {attention.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No updates reported.</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {attention.map((p) => (
+                    <li key={p.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{p.name}</span>
+                      <span className="flex items-center gap-1 font-mono text-xs whitespace-nowrap">
+                        {p.version ?? '?'} → {p.latestVersion}
+                        {updateSeverity(p.version, p.latestVersion) === 'major' && <Badge tone="danger">major</Badge>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {updates > 0 && (
+                <Button variant="ghost" size="sm" className="mt-2" onClick={() => onOpen('updates')}>
+                  Open Update Center ({updates})
+                </Button>
+              )}
+            </section>
+
+            <section aria-labelledby="fresh" className="rounded-lg border bg-card p-4">
+              <h2 id="fresh" className="mb-2 text-sm font-medium">
+                Recently seen
+              </h2>
+              {fresh.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No new packages since the first scan.</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {fresh.map((p) => (
+                    <li key={p.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{p.name}</span>
+                      <span className="text-xs whitespace-nowrap text-muted-foreground">{formatTimestamp(p.firstSeenAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 text-xs text-muted-foreground">First seen by UniManage, not an install date.</p>
+            </section>
+
+            <section aria-labelledby="ops" className="rounded-lg border bg-card p-4">
+              <h2 id="ops" className="mb-2 text-sm font-medium">
+                Recent operations
+              </h2>
+              {recentOps.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Nothing has been run yet.</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {recentOps.map((o) => (
+                    <li key={o.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">
+                        {o.operationType} {o.packageName}
+                      </span>
+                      <Badge tone={resultTone(o.result)}>{o.result}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Button variant="ghost" size="sm" className="mt-2" onClick={() => onOpen('history')}>
+                Open history
+              </Button>
+            </section>
+          </div>
 
           {failed.length > 0 && (
             <div className="flex gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm" role="alert">

@@ -128,6 +128,7 @@ export function Installed({ inv, ops }: { inv: Inventory; ops: Operations }) {
     () => sortPackages(filterPackages(inv.packages, filters), sort.key, sort.dir),
     [inv.packages, filters, sort],
   )
+  const hasReason = useMemo(() => inv.packages.some((p) => p.metadata.installReason), [inv.packages])
   const selected = inv.packages.find((p) => p.id === selectedId) ?? null
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) => setFilters((f) => ({ ...f, [k]: v }))
   const toggle = (key: SortKey) =>
@@ -180,6 +181,13 @@ export function Installed({ inv, ops }: { inv: Inventory; ops: Operations }) {
             <option value="library">Library / dev tool</option>
             <option value="system">System package</option>
           </select>
+          {hasReason && (
+            <select aria-label="Install reason" className={selectCls} value={filters.reason} onChange={(e) => set('reason', e.target.value as Filters['reason'])}>
+              <option value="">Any install reason</option>
+              <option value="manual">Manually installed</option>
+              <option value="automatic">Installed as dependency</option>
+            </select>
+          )}
           <span className="text-xs text-muted-foreground tabular-nums">{rows.length} / {inv.packages.length}</span>
         </div>
 

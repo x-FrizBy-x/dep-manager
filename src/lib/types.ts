@@ -26,6 +26,8 @@ export interface Pkg {
   dependencies: string[]
   metadata: Record<string, string>
   alsoFoundIn: string[]
+  /** When UniManage first saw it (unix seconds). Not the install date. */
+  firstSeenAt: number | null
 }
 
 export interface ManagerInfo {
@@ -190,4 +192,10 @@ export interface ManifestDiff {
   manifestId: number
   name: string
   managers: ManagerDiff[]
+}
+
+export interface Settings {
+  rescanEnabled: boolean
+  rescanIntervalMinutes: number
+  rescanCheckUpdates: boolean
 }
