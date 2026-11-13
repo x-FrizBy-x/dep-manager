@@ -199,3 +199,28 @@ export interface Settings {
   rescanIntervalMinutes: number
   rescanCheckUpdates: boolean
 }
+
+export interface ProjectDep {
+  name: string
+  spec: string | null
+  group: string
+  resolved: string | null
+  installed: string | null
+}
+
+export interface Ecosystem {
+  id: 'npm' | 'python' | 'cargo'
+  label: string
+  files: string[]
+  lockfile: string | null
+  dependencies: ProjectDep[]
+  notes: string[]
+  error: string | null
+}
+
+export interface ProjectScan {
+  path: string
+  name: string
+  ecosystems: Ecosystem[]
+  unsupported: string[]
+}

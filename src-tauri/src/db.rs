@@ -392,6 +392,23 @@ impl Db {
         Ok(self.conn.query_row("SELECT MAX(started_at) FROM scan_history", [], |r| r.get(0))?)
     }
 
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO application_settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=?2",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Saved project folders (most recently scanned first).
+    pub fn projects(&self) -> Result<Vec<String>> {
+        Ok(self.setting("projects")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
+    }
+
+    pub fn save_projects(&self, list: &[String]) -> Result<()> {
+        self.set_setting("projects", &serde_json::to_string(list)?)
+    }
+
     #[allow(dead_code)]
     pub fn setting(&self, key: &str) -> Result<Option<String>> {
         Ok(self

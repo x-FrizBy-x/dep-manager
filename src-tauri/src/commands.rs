@@ -401,3 +401,44 @@ pub fn diff_manifest(state: State<'_, AppState>, id: i64) -> Result<crate::manif
         Ok(crate::manifest::diff(id, &m, &d.list_packages()?, &detected, ops::supports_operations))
     })
 }
+
+// ---- project dependencies -------------------------------------------------
+// Read-only: manifests and lockfiles are parsed, no command runs in the project.
+
+const MAX_PROJECTS: usize = 50;
+
+/// Saved project folders that still exist.
+#[tauri::command]
+pub fn get_projects(state: State<'_, AppState>) -> Result<Vec<String>> {
+    with_db(&state, |d| d.projects())
+}
+
+/// Scans a folder and remembers it in the project list.
+#[tauri::command]
+pub async fn scan_project(state: State<'_, AppState>, path: String) -> Result<crate::project::ProjectScan> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = crate::project::resolve_dir(&path)?;
+        let scan = crate::project::scan_dir(&dir);
+        let d = db.lock().map_err(|_| AppError::Db("database lock poisoned".into()))?;
+        let mut list = d.projects()?;
+        list.retain(|p| p != &scan.path);
+        list.insert(0, scan.path.clone());
+        list.truncate(MAX_PROJECTS);
+        d.save_projects(&list)?;
+        Ok(scan)
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// Forgets a project folder. Does not touch the folder.
+#[tauri::command]
+pub fn remove_project(state: State<'_, AppState>, path: String) -> Result<Vec<String>> {
+    with_db(&state, |d| {
+        let mut list = d.projects()?;
+        list.retain(|p| p != &path);
+        d.save_projects(&list)?;
+        Ok(list)
+    })
+}

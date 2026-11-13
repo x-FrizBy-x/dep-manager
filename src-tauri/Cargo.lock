@@ -3601,6 +3601,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "thiserror 2.0.21",
+ "toml 0.8.2",
  "which",
 ]
 

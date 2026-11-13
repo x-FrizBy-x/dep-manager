@@ -6,6 +6,7 @@ pub mod exec;
 pub mod manifest;
 pub mod model;
 pub mod ops;
+pub mod project;
 pub mod scanner;
 pub mod settings;
 
@@ -66,6 +67,9 @@ pub fn run() {
             commands::import_manifest,
             commands::delete_manifest,
             commands::diff_manifest,
+            commands::get_projects,
+            commands::scan_project,
+            commands::remove_project,
             commands::get_settings,
             commands::save_settings,
         ])

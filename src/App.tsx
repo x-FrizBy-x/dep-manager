@@ -1,6 +1,7 @@
 import {
   Boxes,
   Download,
+  FolderTree,
   GitFork,
   History,
   LayoutDashboard,
@@ -17,6 +18,7 @@ import { useInventory } from '@/hooks/useInventory'
 import { useOperations } from '@/hooks/useOperations'
 import { cn } from '@/lib/utils'
 import { History as HistoryPage } from '@/pages/History'
+import { Projects } from '@/pages/Projects'
 import { SettingsPage, type ThemePref } from '@/pages/Settings'
 import { Backup } from '@/pages/Backup'
 import { Dependencies } from '@/pages/Dependencies'
@@ -25,7 +27,7 @@ import { Installed } from '@/pages/Installed'
 import { Overview } from '@/pages/Overview'
 import { Updates } from '@/pages/Updates'
 
-type PageId = 'overview' | 'installed' | 'updates' | 'explorer' | 'graph' | 'backup' | 'history' | 'settings'
+type PageId = 'overview' | 'projects' | 'installed' | 'updates' | 'explorer' | 'graph' | 'backup' | 'history' | 'settings'
 
 const NAV: { id: PageId; label: string; icon: LucideIcon; ready: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, ready: true },
@@ -33,6 +35,7 @@ const NAV: { id: PageId; label: string; icon: LucideIcon; ready: boolean }[] = [
   { id: 'updates', label: 'Updates', icon: Download, ready: true },
   { id: 'explorer', label: 'Package Explorer', icon: PackageSearch, ready: true },
   { id: 'graph', label: 'Dependencies', icon: GitFork, ready: true },
+  { id: 'projects', label: 'Project Dependencies', icon: FolderTree, ready: true },
   { id: 'backup', label: 'Environment Backup', icon: Boxes, ready: true },
   { id: 'history', label: 'Operation History', icon: History, ready: true },
   { id: 'settings', label: 'Settings', icon: Settings, ready: true },
@@ -123,6 +126,8 @@ export default function App() {
             <Explorer ops={ops} onInstalledChange={ops.batch?.phase ?? ops.active?.record?.id ?? null} />
           ) : page === 'graph' ? (
             <Dependencies inv={inv} />
+          ) : page === 'projects' ? (
+            <Projects />
           ) : page === 'settings' ? (
             <SettingsPage theme={pref} onTheme={setPref} />
           ) : page === 'backup' ? (

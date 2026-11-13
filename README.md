@@ -17,6 +17,7 @@ Read-only inventory for eight managers; writes (install / update / uninstall) fo
 | Package Explorer: search + details | npm, APT, Snap and Flatpak (all but npm are read-only: no install); snap/flatpak parsers tested on real Ubuntu (WSL) output, not yet run in the app |
 | Dependencies page | per-manager dependency lists for npm and APT (read-only) |
 | Environment Backup | manifests per manager (stored in SQLite), JSON and YAML export, JSON import with validation, diff against the last scan, restore through the normal preview/confirm flow (npm only). No exact-reproduction guarantee; nothing is ever removed |
+| Project Dependencies | read-only: declared deps from a folder's package.json (+ package-lock.json, node_modules), requirements.txt, pyproject.toml (PEP 621/735, Poetry) and Cargo.toml (+ Cargo.lock); other manifests are listed as unsupported. Never runs anything in the project; separate from global packages |
 | Settings + background rescan | theme (system/light/dark) and an opt-in, off-by-default periodic read-only rescan (15 min to daily) while the app is open; Overview shows needs-attention, recently seen and recent operations; Installed has an apt install-reason filter |
 | Install / update / remove for APT, Snap, Flatpak, pipx, uv, mise, pnpm | **not implemented** (no privilege-escalation design yet) |
 

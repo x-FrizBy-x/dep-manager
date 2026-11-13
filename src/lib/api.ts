@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
   ManagerInfo,
+  ProjectScan,
   Settings,
   ManifestDiff,
   ManifestSummary,
@@ -53,6 +54,9 @@ export const api = {
   importManifest: (content: string) => invoke<ManifestSummary>('import_manifest', { content }),
   deleteManifest: (id: number) => invoke<void>('delete_manifest', { id }),
   diffManifest: (id: number) => invoke<ManifestDiff>('diff_manifest', { id }),
+  getProjects: () => invoke<string[]>('get_projects'),
+  scanProject: (path: string) => invoke<ProjectScan>('scan_project', { path }),
+  removeProject: (path: string) => invoke<string[]>('remove_project', { path }),
   getSettings: () => invoke<Settings>('get_settings'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   onScanFinished: (cb: () => void) => listen('scan-finished', () => cb()),
