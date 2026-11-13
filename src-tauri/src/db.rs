@@ -324,6 +324,12 @@ impl Db {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    /// Deletes every finished operation and its log lines (cascade). An operation
+    /// still marked `running` is kept. Returns how many were removed.
+    pub fn clear_operation_history(&self) -> Result<usize> {
+        Ok(self.conn.execute("DELETE FROM operations WHERE result <> 'running'", [])?)
+    }
+
     pub fn operation_logs(&self, op_id: i64) -> Result<Vec<OperationLogLine>> {
         let mut st = self
             .conn
@@ -496,6 +502,23 @@ mod tests {
         assert_eq!(ops[1].result, "success");
         assert_eq!(ops[1].new_version.as_deref(), Some("2.0.0"));
         assert_eq!(db.operation_logs(a).unwrap()[0].line, "hello");
+    }
+
+    #[test]
+    fn clearing_history_keeps_running_and_removes_logs() {
+        let db = Db::open_in_memory().unwrap();
+        let done = db.begin_operation("update", "a", "npm", None, "cmd").unwrap();
+        db.append_log(done, "stdout", "x").unwrap();
+        db.finish_operation(done, "failed", None, Some("boom")).unwrap();
+        let live = db.begin_operation("update", "b", "npm", None, "cmd").unwrap();
+        db.append_log(live, "stdout", "y").unwrap();
+        assert_eq!(db.clear_operation_history().unwrap(), 1);
+        let left = db.list_operations(10).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, live);
+        assert!(db.operation_logs(done).unwrap().is_empty());
+        assert_eq!(db.operation_logs(live).unwrap().len(), 1);
+        assert_eq!(db.clear_operation_history().unwrap(), 0);
     }
 
     #[test]

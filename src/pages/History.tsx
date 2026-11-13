@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { resultTone } from '@/lib/operations'
 import type { OperationLogLine, OperationRecord } from '@/lib/types'
@@ -12,6 +13,8 @@ export function History({ refreshKey }: { refreshKey: unknown }) {
   const [selected, setSelected] = useState<number | null>(null)
   const [logs, setLogs] = useState<OperationLogLine[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     let off = false
@@ -38,8 +41,45 @@ export function History({ refreshKey }: { refreshKey: unknown }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col p-6">
-      <h1 className="text-xl font-semibold">Operation History</h1>
-      <p className="mb-4 text-sm text-muted-foreground">Every install, update and removal UniManage has run, with its full output.</p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">Operation History</h1>
+          <p className="text-sm text-muted-foreground">Every install, update and removal UniManage has run, with its full output.</p>
+        </div>
+        {ops && ops.length > 0 &&
+          (confirming ? (
+            <div className="flex items-center gap-2 text-sm" role="group" aria-label="Confirm clearing history">
+              <span>Delete {ops.length} record{ops.length === 1 ? '' : 's'} and their output? Installed software is not affected.</span>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => {
+                  setConfirming(false)
+                  setError(null)
+                  api
+                    .clearOperationHistory()
+                    .then((n) => {
+                      setOps([])
+                      setSelected(null)
+                      setLogs([])
+                      setNotice(`Cleared ${n} record${n === 1 ? '' : 's'}.`)
+                    })
+                    .catch((e) => setError(String(e)))
+                }}
+              >
+                Clear history
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+                Keep
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => { setNotice(null); setConfirming(true) }}>
+              Clear history…
+            </Button>
+          ))}
+      </div>
+      {notice && <div role="status" className="mb-3 rounded-md border bg-muted p-2 text-sm">{notice}</div>}
       {error && <div role="alert" className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm">{error}</div>}
       {ops && ops.length === 0 && <div className="p-8 text-center text-sm text-muted-foreground">No operations yet.</div>}
       <div className="min-h-0 flex-1 overflow-auto">

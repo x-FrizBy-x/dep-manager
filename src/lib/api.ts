@@ -36,6 +36,7 @@ export const api = {
   runOperation: (planId: string) => invoke<OperationRecord>('run_operation', { planId }),
   cancelOperation: () => invoke<void>('cancel_operation'),
   getOperations: (limit = 100) => invoke<OperationRecord[]>('get_operations', { limit }),
+  clearOperationHistory: () => invoke<number>('clear_operation_history'),
   getOperationLogs: (operationId: number) => invoke<OperationLogLine[]>('get_operation_logs', { operationId }),
   onOperationLog: (cb: (e: OperationLogEvent) => void) => listen<OperationLogEvent>('operation-log', (e) => cb(e.payload)),
   onOperationStarted: (cb: (id: number) => void) =>

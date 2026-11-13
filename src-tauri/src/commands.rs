@@ -214,6 +214,17 @@ pub fn get_operations(state: State<'_, AppState>, limit: Option<u32>) -> Result<
     with_db(&state, |d| d.list_operations(limit.unwrap_or(100)))
 }
 
+/// Deletes the finished operations and their output from the history. Only the
+/// record is removed: nothing is undone on the system. Refused while an
+/// operation is running so the live record is never touched.
+#[tauri::command]
+pub fn clear_operation_history(state: State<'_, AppState>) -> Result<usize> {
+    if state.op_running.load(Ordering::Acquire) {
+        return Err(AppError::Other("an operation is running; clear the history after it finishes".into()));
+    }
+    with_db(&state, |d| d.clear_operation_history())
+}
+
 #[tauri::command]
 pub fn get_operation_logs(state: State<'_, AppState>, operation_id: i64) -> Result<Vec<OperationLogLine>> {
     with_db(&state, |d| d.operation_logs(operation_id))

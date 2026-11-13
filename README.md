@@ -12,7 +12,7 @@ Read-only inventory for eight managers; writes (install / update / uninstall) fo
 | Scanner (parallel, per-manager failure isolation, progress events, overlap annotation) | done |
 | SQLite schema + migrations (all 9 tables) | done; scan_history / installed_packages / package_managers / operations / operation_logs in use |
 | Overview + Installed Software pages (search, filters, sort, detail panel) | done |
-| Operations (npm only): preview → explicit confirmation → execute, live operation console, cancel (kills the whole process tree), history page | done |
+| Operations (npm only): preview → explicit confirmation → execute, live operation console, cancel (kills the whole process tree), history page (clearable, with confirmation) | done |
 | Update Center: multi-select batch update with one review dialog, sequential execution, no "update all" | done (npm only) |
 | Package Explorer: search + details | npm, APT, Snap and Flatpak (all but npm are read-only: no install); snap/flatpak parsers tested on real Ubuntu (WSL) output, not yet run in the app |
 | Dependencies page | per-manager dependency lists for npm and APT (read-only) |
