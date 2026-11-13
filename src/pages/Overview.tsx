@@ -131,9 +131,13 @@ export function Overview({ inv, refreshKey, onOpen }: { inv: Inventory; refreshK
                 <ul className="space-y-1 text-sm">
                   {attention.map((p) => (
                     <li key={p.id} className="flex items-center justify-between gap-2">
-                      <span className="truncate">{p.name}</span>
-                      <span className="flex items-center gap-1 font-mono text-xs whitespace-nowrap">
-                        {p.version ?? '?'} → {p.latestVersion}
+                      <span className="min-w-0 flex-1 truncate" title={p.name}>
+                        {p.name}
+                      </span>
+                      <span className="flex max-w-[60%] min-w-0 items-center gap-1 font-mono text-xs">
+                        <span className="truncate" title={`${p.version ?? '?'} → ${p.latestVersion}`}>
+                          {p.version ?? '?'} → {p.latestVersion}
+                        </span>
                         {updateSeverity(p.version, p.latestVersion) === 'major' && <Badge tone="danger">major</Badge>}
                       </span>
                     </li>
