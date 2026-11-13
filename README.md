@@ -4,7 +4,7 @@ A unified, **safety-first** management layer over existing package managers (Tau
 
 ## Status
 
-Read-only inventory for eight managers; writes (install / update / uninstall) for **npm global packages only**. Linux is the target platform; the dev machine is Windows, so only npm has been exercised end to end in the app.
+Read-only inventory for eight managers; writes (install / update / uninstall) for **npm global packages only**. Linux is the target platform; the dev machine is Windows, so only npm has been exercised end to end in the running app. On Linux (Ubuntu in WSL) the whole backend test suite passes and the real adapters have been run against live apt, snap, flatpak and npm via `cargo test --test real_system -- --ignored --nocapture` (the desktop window itself has not been opened on Linux).
 
 | Area | State |
 |---|---|

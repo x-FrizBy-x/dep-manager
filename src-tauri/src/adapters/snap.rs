@@ -21,7 +21,8 @@ impl Adapter for Snap {
 
     fn version(&self, r: &dyn Runner) -> Result<String> {
         let out = r.run("snap", &["--version"])?.ok()?;
-        Ok(out.stdout.lines().next().unwrap_or("").trim().to_string())
+        // `snap --version` pads its first line with runs of spaces ("snap    2.76.3").
+        Ok(out.stdout.lines().next().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "))
     }
 
     fn list_installed(&self, r: &dyn Runner) -> Result<Vec<Package>> {

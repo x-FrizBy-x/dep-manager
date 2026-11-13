@@ -5,6 +5,7 @@ UniManage: safety-first unified manager over existing package managers (Tauri 2 
 ## Commands
 - `npm install`; `npm run tauri dev` (desktop app); `npm run build` (tsc -b + vite)
 - `npm test` (Vitest); `npm run test:rust` (or `cargo test --lib` in `src-tauri`); `npm run typecheck`; `npm run lint` (oxlint; one known warning in `hooks/useInventory.ts`)
+- Real-system smoke test (read-only, ignored by default): `cargo test --manifest-path src-tauri/Cargo.toml --test real_system -- --ignored --nocapture`; used on Linux/WSL to run the real adapters
 - UI driving: `node scripts/ui-check.mjs <shot.png> [text to click ...]` (Playwright over CDP; start app with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`)
 
 ## Layout
