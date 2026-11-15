@@ -11,7 +11,13 @@
   },
   "app": {
     "windows": [
-      { "title": "UniManage", "width": 1280, "height": 800, "minWidth": 960, "minHeight": 600 }
+      {
+        "title": "UniManage",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600
+      }
     ],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
@@ -19,7 +25,25 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    "targets": [
+      "deb",
+      "appimage"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "category": "Utility",
+    "shortDescription": "Safety-first unified manager over existing package managers",
+    "linux": {
+      "deb": {
+        "depends": [
+          "pkexec | policykit-1"
+        ]
+      }
+    }
   }
 }
