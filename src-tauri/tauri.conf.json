@@ -44,6 +44,9 @@
           "pkexec | policykit-1"
         ]
       }
-    }
+    },
+    "publisher": "UniManage contributors",
+    "homepage": "https://github.com/x-FrizBy-x/dep-manager",
+    "longDescription": "UniManage is a unified, safety-first front end for the package managers already on your system (apt, snap, flatpak, npm, pipx and more). It lists installed packages, shows updates and dependencies, and changes nothing without a preview and explicit confirmation. Privileged operations go through polkit; UniManage never sees your password."
   }
 }
