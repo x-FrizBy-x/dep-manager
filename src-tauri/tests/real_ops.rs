@@ -145,6 +145,25 @@ fn apt_install_remove_through_polkit_dialog() {
     assert!(installed("apt", pkg).is_none());
 }
 
+/// Failure path of the polkit dialog: you must CANCEL the dialog or type a WRONG password.
+/// Opt-in: `UNIMANAGE_POLKIT_FAIL_TEST=1`. Expects a non-success result and no `hello`.
+#[test]
+#[ignore]
+fn apt_install_polkit_denied() {
+    let uid = std::process::Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if std::env::var("UNIMANAGE_POLKIT_FAIL_TEST").as_deref() != Ok("1") || uid.ok().as_deref() == Some("0") || !std::path::Path::new(ops::ELEVATOR).exists() {
+        println!("needs UNIMANAGE_POLKIT_FAIL_TEST=1, a non-root user and pkexec; skipping");
+        return;
+    }
+    let db = Mutex::new(Db::open_in_memory().unwrap());
+    assert!(installed("apt", "hello").is_none(), "hello must not be installed before the test");
+    println!(">>> CANCEL the dialog or enter a WRONG password");
+    let (r, v) = run(&db, "apt", OpKind::Install, "hello", None, &PlanContext::default());
+    println!("result={r} version={v:?}");
+    assert_ne!(r, "success");
+    assert!(installed("apt", "hello").is_none(), "nothing must have been installed");
+}
+
 /// Elevated path. Only runs when the test itself is root, where `pkexec` executes the
 /// command directly without any dialog (run with `wsl -u root`); otherwise it would wait
 /// for a polkit prompt, so it skips. Uses the tiny `hello` package and removes it again.
