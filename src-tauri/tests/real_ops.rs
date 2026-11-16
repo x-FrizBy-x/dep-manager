@@ -115,6 +115,36 @@ fn flatpak_install_update_uninstall_per_user() {
     assert!(ops::plan_operation("t".into(), 0, "flatpak", OpKind::Uninstall, app, None, &sys).is_err());
 }
 
+/// Elevated path as a NORMAL user: every operation goes through the real polkit dialog, so
+/// it needs a polkit agent in a login session and a human typing the password (two prompts:
+/// install and remove). Opt-in only: `UNIMANAGE_POLKIT_TEST=1`. Installs and removes `hello`.
+#[test]
+#[ignore]
+fn apt_install_remove_through_polkit_dialog() {
+    let uid = std::process::Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if std::env::var("UNIMANAGE_POLKIT_TEST").as_deref() != Ok("1") || uid.ok().as_deref() == Some("0") || !std::path::Path::new(ops::ELEVATOR).exists() {
+        println!("needs UNIMANAGE_POLKIT_TEST=1, a non-root user and pkexec; skipping");
+        return;
+    }
+    let db = Mutex::new(Db::open_in_memory().unwrap());
+    let pkg = "hello";
+    assert!(installed("apt", pkg).is_none(), "{pkg} must not be installed before the test");
+
+    let sim = std::process::Command::new("apt-get").args(["-s", "install", pkg]).output().unwrap();
+    let lines = ops::parse_apt_simulation(&String::from_utf8_lossy(&sim.stdout));
+    assert!(lines.iter().any(|l| l.starts_with("Inst hello")), "simulation should list hello");
+
+    println!(">>> password dialog #1 (install)");
+    let (r, v) = run(&db, "apt", OpKind::Install, pkg, None, &PlanContext { simulation: lines, ..Default::default() });
+    assert_eq!(r, "success");
+    assert!(v.is_some(), "installed version should be visible after the rescan");
+
+    println!(">>> password dialog #2 (remove)");
+    let (r, _) = run(&db, "apt", OpKind::Uninstall, pkg, None, &PlanContext { previous_version: v, ..Default::default() });
+    assert_eq!(r, "success");
+    assert!(installed("apt", pkg).is_none());
+}
+
 /// Elevated path. Only runs when the test itself is root, where `pkexec` executes the
 /// command directly without any dialog (run with `wsl -u root`); otherwise it would wait
 /// for a polkit prompt, so it skips. Uses the tiny `hello` package and removes it again.
