@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { Inventory } from '@/hooks/useInventory'
 import { OPERABLE_MANAGERS, type Operations } from '@/hooks/useOperations'
-import { resultTone } from '@/lib/operations'
+import { batchItemStatus, resultTone } from '@/lib/operations'
 import { updateSeverity, type Severity } from '@/lib/severity'
 
 const SEVERITY_TONE: Record<Severity, 'danger' | 'warning' | 'success' | 'neutral'> = {
@@ -70,11 +70,11 @@ export function Updates({ inv, ops }: { inv: Inventory; ops: Operations }) {
           <ul className="space-y-1">
             {batch.plans.map((plan, i) => {
               const r = batch.results[i]
-              const status = r ? (r.record ? r.record.result : 'failed') : running && i === batch.current ? 'running' : 'skipped'
+              const status = batchItemStatus(r, i, running, batch.current)
               const problem = r?.error ?? r?.record?.error
               return (
                 <li key={plan.id} className="flex items-center gap-2">
-                  <Badge tone={status === 'skipped' ? 'neutral' : resultTone(status as never)}>{status}</Badge>
+                  <Badge tone={status === 'skipped' || status === 'queued' ? 'neutral' : resultTone(status as never)}>{status}</Badge>
                   <span className="font-medium">{plan.package}</span>
                   {r?.record?.newVersion && (
                     <span className="font-mono text-xs text-muted-foreground">→ {r.record.newVersion}</span>

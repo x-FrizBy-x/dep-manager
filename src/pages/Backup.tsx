@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import type { Inventory } from '@/hooks/useInventory'
 import { VERSION_PINNABLE, type Operations } from '@/hooks/useOperations'
 import { api } from '@/lib/api'
-import { resultTone } from '@/lib/operations'
+import { batchItemStatus, resultTone } from '@/lib/operations'
 import type { DiffEntry, ManifestDiff, ManifestSummary } from '@/lib/types'
 
 const fmt = (t: number) => new Date(t * 1000).toLocaleString()
@@ -226,7 +226,7 @@ export function Backup({ inv, ops }: { inv: Inventory; ops: Operations }) {
                   <ul className="mt-1 space-y-0.5">
                     {batch.plans.map((plan, i) => {
                       const r = batch.results[i]
-                      const status = r ? (r.record ? r.record.result : 'failed') : running && i === batch.current ? 'running' : 'skipped'
+                      const status = batchItemStatus(r, i, running, batch.current)
                       return (
                         <li key={plan.id} className="flex items-center gap-2">
                           <span className="break-all">{plan.package}</span>
