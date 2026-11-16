@@ -487,13 +487,14 @@ pub fn execute(
 }
 
 /// Human-readable reason for a non-zero exit. For elevated runs the status is pkexec's:
-/// 126 = the authentication dialog was dismissed, 127 = not authorized (wrong password or
-/// policy denial) - but `env` also exits 127 for a missing command, so that is stated too.
+/// 126 = the authentication dialog was dismissed (documented pkexec behaviour), 127 = not
+/// authorized (observed with lxpolkit for both Cancel and wrong passwords, and for policy
+/// denial) - but `env` also exits 127 for a missing command, so that is stated too.
 pub fn failure_message(elevated: bool, status: Option<i32>) -> String {
     match (elevated, status) {
         (_, None) => "terminated without an exit status".to_string(),
         (true, Some(126)) => "authentication was dismissed or not completed (pkexec status 126); nothing was changed".to_string(),
-        (true, Some(127)) => "not authorized: wrong password or permission denied (pkexec status 127; the same code also means the command was not found)".to_string(),
+        (true, Some(127)) => "not authorized: authentication failed, the dialog was cancelled, or permission was denied; nothing was changed (pkexec status 127, which `env` also uses when a command is not found)".to_string(),
         (_, Some(c)) => format!("exited with status {c}"),
     }
 }
@@ -505,7 +506,7 @@ mod tests {
     #[test]
     fn pkexec_failure_codes_are_explained() {
         assert!(failure_message(true, Some(126)).contains("dismissed"));
-        assert!(failure_message(true, Some(127)).contains("not authorized"));
+        assert!(failure_message(true, Some(127)).contains("not authorized") && failure_message(true, Some(127)).contains("cancelled"));
         // Unelevated runs keep the plain message; other codes never get a pkexec explanation.
         assert_eq!(failure_message(false, Some(127)), "exited with status 127");
         assert_eq!(failure_message(true, Some(100)), "exited with status 100");
