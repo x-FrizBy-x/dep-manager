@@ -66,6 +66,18 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
   }
+  /* Native form controls (WebKitGTK draws selects white otherwise, leaving light text unreadable). */
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+  select,
+  option {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
