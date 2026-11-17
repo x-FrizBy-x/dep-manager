@@ -93,6 +93,8 @@ export function BatchDialog({ ops }: { ops: Operations }) {
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           They run one at a time, in this order. A failure does not stop the rest; Cancel stops the batch. Nothing is removed.
+          {batch.plans.some((p) => p.effects.length > 0) &&
+            ' Dry runs were simulated separately for each package before this review, so earlier updates in the batch may already cover later ones.'}
         </p>
         <ul className="mt-3 min-h-0 flex-1 space-y-2 overflow-auto">
           {batch.plans.map((p) => (
@@ -104,6 +106,18 @@ export function BatchDialog({ ops }: { ops: Operations }) {
                 </span>
               </div>
               <pre className="mt-1 overflow-x-auto font-mono text-xs text-muted-foreground">{p.command}</pre>
+              {p.effects.length > 0 && (
+                <div className="mt-1">
+                  <div className="text-xs text-muted-foreground">Dry run: what would change ({p.effects.length})</div>
+                  <ul className="mt-1 max-h-28 overflow-auto rounded-md bg-muted p-2 font-mono text-xs">
+                    {p.effects.map((e) => (
+                      <li key={e} className={e.startsWith('Remv') || e.startsWith('Purg') ? 'text-destructive' : ''}>
+                        {e}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {p.requiresElevation && <Badge tone="warning">needs elevation</Badge>}
             </li>
           ))}
