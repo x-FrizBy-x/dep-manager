@@ -44,6 +44,9 @@ pub struct OperationPlan {
     /// Target version (install/update); `None` = latest.
     pub version: Option<String>,
     pub previous_version: Option<String>,
+    /// Update only: the newest version the last update check found. Display only; it is
+    /// never passed to the manager (apt/snap/flatpak cannot pin a version).
+    pub expected_version: Option<String>,
     pub program: String,
     pub args: Vec<String>,
     /// Human-readable rendering for the preview. Display only, never executed.
@@ -85,6 +88,8 @@ pub fn supports_version_pin(manager_id: &str) -> bool {
 #[derive(Debug, Clone, Default)]
 pub struct PlanContext {
     pub previous_version: Option<String>,
+    /// Latest version known from the last update check (shown as the update target).
+    pub latest_version: Option<String>,
     /// Flatpak: the remote that carries the package (resolved before install).
     pub remote: Option<String>,
     /// Flatpak: `user` or `system` as recorded by the scan.
@@ -408,6 +413,7 @@ pub fn plan_operation(
         package: package.into(),
         version: version.map(String::from),
         previous_version: ctx.previous_version.clone(),
+        expected_version: if kind == OpKind::Update { ctx.latest_version.clone() } else { None },
         program: program.into(),
         args,
         command,
@@ -693,6 +699,21 @@ mod tests {
         assert_eq!(p.effects.len(), 3);
         let u = plan_operation("p".into(), 0, "apt", OpKind::Update, "foo", None, &ctx).unwrap();
         assert!(u.warnings[0].contains("REMOVE 2"));
+    }
+
+    #[test]
+    fn expected_version_is_display_only_and_update_only() {
+        let ctx = PlanContext {
+            previous_version: Some("1.0".into()),
+            latest_version: Some("2.0".into()),
+            ..Default::default()
+        };
+        let u = plan_operation("p".into(), 0, "snap", OpKind::Update, "hello-world", None, &ctx).unwrap();
+        assert_eq!(u.expected_version.as_deref(), Some("2.0"));
+        assert_eq!(u.version, None, "expected version must not become a pin");
+        assert!(!u.command.contains("2.0"));
+        let r = plan_operation("p".into(), 0, "snap", OpKind::Uninstall, "hello-world", None, &ctx).unwrap();
+        assert_eq!(r.expected_version, None);
     }
 
     #[test]

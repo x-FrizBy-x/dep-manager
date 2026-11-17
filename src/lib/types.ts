@@ -79,6 +79,7 @@ export interface OperationPlan {
   package: string
   version: string | null
   previousVersion: string | null
+  expectedVersion: string | null
   program: string
   args: string[]
   command: string

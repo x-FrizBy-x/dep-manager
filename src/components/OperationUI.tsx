@@ -31,7 +31,7 @@ export function ConfirmDialog({ ops }: { ops: Operations }) {
             <>
               <dt className="text-muted-foreground">Version</dt>
               <dd>
-                {plan.previousVersion ?? 'not installed'} → {plan.version ?? 'latest'}
+                {plan.previousVersion ?? 'not installed'} → {plan.version ?? plan.expectedVersion ?? 'latest'}
               </dd>
             </>
           )}
@@ -39,7 +39,7 @@ export function ConfirmDialog({ ops }: { ops: Operations }) {
           <dd>{plan.requiresElevation ? 'Required: a system password dialog (polkit) will appear' : 'Not required'}</dd>
         </dl>
         <div className="mt-3 text-xs text-muted-foreground">Exact command that will run (no shell):</div>
-        <pre className="mt-1 overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs">{plan.command}</pre>
+        <pre className="mt-1 whitespace-pre-wrap break-all rounded-md bg-muted p-2 font-mono text-xs">{plan.command}</pre>
         {plan.effects.length > 0 && (
           <div className="mt-3">
             <div className="text-xs text-muted-foreground">Dry run: what would change ({plan.effects.length})</div>
@@ -102,10 +102,10 @@ export function BatchDialog({ ops }: { ops: Operations }) {
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium break-all">{p.package}</span>
                 <span className="font-mono text-xs whitespace-nowrap">
-                  {p.previousVersion ?? '?'} → {p.version ?? 'latest'}
+                  {p.previousVersion ?? '?'} → {p.version ?? p.expectedVersion ?? 'latest'}
                 </span>
               </div>
-              <pre className="mt-1 overflow-x-auto font-mono text-xs text-muted-foreground">{p.command}</pre>
+              <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-xs text-muted-foreground">{p.command}</pre>
               {p.effects.length > 0 && (
                 <div className="mt-1">
                   <div className="text-xs text-muted-foreground">Dry run: what would change ({p.effects.length})</div>

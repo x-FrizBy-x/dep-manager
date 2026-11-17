@@ -121,6 +121,7 @@ pub async fn preview_operation(
         .find(|p| p.package_manager == manager_id && p.name == package);
     let mut ctx = ops::PlanContext {
         previous_version: local.as_ref().and_then(|p| p.version.clone()),
+        latest_version: local.as_ref().and_then(|p| p.latest_version.clone()),
         scope: local.as_ref().and_then(|p| p.metadata.get("installation").cloned()),
         remote: None,
         simulation: Vec::new(),
