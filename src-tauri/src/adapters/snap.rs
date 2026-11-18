@@ -186,14 +186,16 @@ pub(crate) fn parse_list(stdout: &str) -> Vec<Package> {
         .collect()
 }
 
-/// `Name Version Rev Size Publisher Notes`
+/// `Name Version Rev Size Publisher Notes`. The target carries the revision
+/// ("2.10 (rev 42)") because snaps can refresh to a new revision with an
+/// unchanged version string; without it such updates would look current.
 pub(crate) fn parse_refresh(stdout: &str) -> Vec<UpdateInfo> {
     stdout
         .lines()
         .skip(1)
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
-            (f.len() >= 3).then(|| UpdateInfo { name: f[0].into(), latest_version: f[1].into() })
+            (f.len() >= 3).then(|| UpdateInfo { name: f[0].into(), latest_version: format!("{} (rev {})", f[1], f[2]) })
         })
         .collect()
 }
@@ -218,8 +220,13 @@ mod tests {
     #[test]
     fn parses_refresh() {
         let out = "Name     Version  Rev   Size  Publisher  Notes\nfirefox  131.0  4400  250MB  mozilla  -\n";
-        assert_eq!(parse_refresh(out), vec![UpdateInfo { name: "firefox".into(), latest_version: "131.0".into() }]);
+        assert_eq!(parse_refresh(out), vec![UpdateInfo { name: "firefox".into(), latest_version: "131.0 (rev 4400)".into() }]);
         assert!(parse_refresh("").is_empty());
+        // Same version string, new revision (seen on a real snapd): still an update.
+        let same = "Name   Version  Rev  Size   Publisher    Notes
+hello  2.10     42   106kB  canonical**  -
+";
+        assert_eq!(parse_refresh(same)[0].latest_version, "2.10 (rev 42)");
     }
 
     #[test]
