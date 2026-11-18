@@ -40,6 +40,8 @@ export function Overview({ inv, refreshKey, onOpen }: { inv: Inventory; refreshK
   const updates = packages.filter((p) => p.updateStatus === 'available').length
   const failed = managers.filter((m) => m.lastError)
   const scanned = lastScan !== null && lastScan.status !== 'running'
+  const stale = failed.reduce((n, m) => n + m.packageCount, 0)
+  const scanFailed = lastScan?.status === 'failed'
   const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0
 
   return (
@@ -81,7 +83,11 @@ export function Overview({ inv, refreshKey, onOpen }: { inv: Inventory; refreshK
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Installed packages" value={packages.length} />
+            <Stat
+              label="Installed packages"
+              value={packages.length}
+              hint={stale > 0 ? `${stale} from the last successful scan (a manager failed)` : undefined}
+            />
             <Stat
               label="Updates available"
               value={updates}
@@ -114,6 +120,7 @@ export function Overview({ inv, refreshKey, onOpen }: { inv: Inventory; refreshK
                     {m.lastError ?? (m.detected ? (m.version ?? m.path) : 'Not installed')}
                   </span>
                   {m.detected && !m.lastError && <Badge>{m.packageCount} packages</Badge>}
+                  {m.detected && m.lastError && m.packageCount > 0 && <Badge tone="warning">{m.packageCount} stale</Badge>}
                   {m.detected && !m.supportsUpdates && <Badge tone="warning">no update info</Badge>}
                 </li>
               ))}
@@ -194,7 +201,13 @@ export function Overview({ inv, refreshKey, onOpen }: { inv: Inventory; refreshK
             </section>
           </div>
 
-          {failed.length > 0 && (
+          {scanFailed && (
+            <div className="flex gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm" role="alert">
+              <XCircle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+              <span>The last scan failed for every detected manager; the data below is from earlier scans.</span>
+            </div>
+          )}
+          {failed.length > 0 && !scanFailed && (
             <div className="flex gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm" role="alert">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
               <span>
