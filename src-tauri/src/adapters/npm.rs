@@ -124,7 +124,12 @@ pub(crate) fn parse_dependencies(stdout: &str, name: &str) -> Result<PackageDepe
                     let e = DependencyEdge {
                         name: pname.clone(),
                         version: node.get("version").and_then(Value::as_str).map(String::from),
-                        kind: "dependency".into(),
+                        // npm keeps a separate copy per global tree, so this is the
+                        // other package's own copy, not the top-level one.
+                        kind: match v.get("version").and_then(Value::as_str) {
+                            Some(ver) => format!("uses its own copy ({ver})"),
+                            None => "uses its own copy".into(),
+                        },
                         installed: true,
                     };
                     if !required_by.contains(&e) {
@@ -147,7 +152,7 @@ pub(crate) fn parse_dependencies(stdout: &str, name: &str) -> Result<PackageDepe
         orphan_hint: None,
         notes: vec![
             "npm gives every global package its own dependency tree, so the same library can appear in several trees.".into(),
-            "Reverse dependencies are only searched among globally installed packages.".into(),
+            "Reverse dependencies are only searched among globally installed packages. Each of those packages keeps its own copy of this library, so uninstalling the top-level one does not affect them.".into(),
             "Entries marked \"optional / not installed\" are declared by the package but absent on this machine (usually other platforms).".into(),
         ],
     })
@@ -337,6 +342,7 @@ mod tests {
         let mut by: Vec<_> = l.required_by.iter().map(|e| e.name.as_str()).collect();
         by.sort();
         assert_eq!(by, vec!["app", "tool"]);
+        assert!(l.required_by.iter().all(|e| e.kind == "uses its own copy (2.0.0)"));
         assert_eq!(l.depends_on[0].name, "deep");
     }
 
