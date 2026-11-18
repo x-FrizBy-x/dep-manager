@@ -165,6 +165,9 @@ export function OperationConsole({ ops }: { ops: Operations }) {
         {rec && rec.newVersion && rec.result === 'success' && (
           <span className="text-xs text-muted-foreground">now {rec.newVersion}</span>
         )}
+        {rec && (rec.result === 'cancelled' || rec.result === 'timeout') && (
+          <span className="text-xs text-warning">The change may already have been applied; check the installed version.</span>
+        )}
         <span className="flex-1" />
         {rec ? (
           <Button variant="ghost" size="icon" className="size-7" onClick={ops.dismiss} aria-label="Close console">
