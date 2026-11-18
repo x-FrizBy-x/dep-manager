@@ -8,7 +8,7 @@ import type { PackageDetails, SearchManager, SearchResult } from '@/lib/types'
 
 const selectCls = 'h-9 rounded-md border bg-background px-2 text-sm focus-visible:outline-2'
 
-function Details({ hit, onClose }: { hit: SearchResult; onClose: () => void }) {
+function Details({ hit, ops, onClose }: { hit: SearchResult; ops: Operations; onClose: () => void }) {
   const [state, setState] = useState<{ key: string; d?: PackageDetails; error?: string }>({ key: '' })
   const key = `${hit.managerId}:${hit.name}`
 
@@ -42,6 +42,11 @@ function Details({ hit, onClose }: { hit: SearchResult; onClose: () => void }) {
           <X className="size-4" />
         </Button>
       </div>
+      {hit.canInstall && !hit.installed && (
+        <Button size="sm" className="mb-3" disabled={ops.busy} onClick={() => void ops.preview(hit.managerId, 'install', hit.name)}>
+          Install
+        </Button>
+      )}
       {loading && <p className="text-sm text-muted-foreground" role="status">Loading details…</p>}
       {!loading && state.error && (
         <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm">{state.error}</p>
@@ -201,8 +206,8 @@ export function Explorer({ ops, onInstalledChange }: { ops: Operations; onInstal
                   >
                     <td className="px-3 py-2 font-medium">{r.name}</td>
                     <td className="px-3 py-2 font-mono text-xs">{r.version ?? '—'}</td>
-                    <td className="max-w-md truncate px-3 py-2 text-muted-foreground">{r.description ?? '—'}</td>
-                    <td className="px-3 py-2">
+                    <td className={`truncate px-3 py-2 text-muted-foreground ${selected ? 'max-w-48' : 'max-w-md'}`}>{r.description ?? '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
                       {r.installed ? <Badge tone="success">Installed {r.installedVersion ?? ''}</Badge> : <Badge>Not installed</Badge>}
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -228,7 +233,7 @@ export function Explorer({ ops, onInstalledChange }: { ops: Operations; onInstal
           </div>
         )}
       </div>
-      {selected && <Details hit={selected} onClose={() => setSelected(null)} />}
+      {selected && <Details hit={selected} ops={ops} onClose={() => setSelected(null)} />}
     </div>
   )
 }

@@ -31,3 +31,6 @@ src-tauri/gen
 explained.txt
 
 HANDOFF.md
+
+# Local Claude Code settings
+.claude/
