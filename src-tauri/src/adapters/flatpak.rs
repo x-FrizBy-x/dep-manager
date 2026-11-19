@@ -158,7 +158,7 @@ pub(crate) fn parse_updates(stdout: &str) -> Vec<UpdateInfo> {
             }
             // Flatpak may not expose a version; fall back to the branch.
             let v = f.get(1).and_then(|s| non_empty(s)).or_else(|| f.get(2).and_then(|s| non_empty(s)))?;
-            Some(UpdateInfo { name: name.to_string(), latest_version: v })
+            Some(UpdateInfo { name: name.to_string(), latest_version: v, current: None })
         })
         .collect()
 }

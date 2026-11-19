@@ -266,7 +266,7 @@ pub(crate) fn parse_outdated(stdout: &str) -> Result<Vec<UpdateInfo>> {
     Ok(obj
         .iter()
         .filter_map(|(k, e)| {
-            Some(UpdateInfo { name: k.clone(), latest_version: e.get("latest")?.as_str()?.into() })
+            Some(UpdateInfo { name: k.clone(), latest_version: e.get("latest")?.as_str()?.into(), current: None })
         })
         .collect())
 }

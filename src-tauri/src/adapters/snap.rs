@@ -195,7 +195,7 @@ pub(crate) fn parse_refresh(stdout: &str) -> Vec<UpdateInfo> {
         .skip(1)
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
-            (f.len() >= 3).then(|| UpdateInfo { name: f[0].into(), latest_version: format!("{} (rev {})", f[1], f[2]) })
+            (f.len() >= 3).then(|| UpdateInfo { name: f[0].into(), latest_version: format!("{} (rev {})", f[1], f[2]), current: None })
         })
         .collect()
 }
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn parses_refresh() {
         let out = "Name     Version  Rev   Size  Publisher  Notes\nfirefox  131.0  4400  250MB  mozilla  -\n";
-        assert_eq!(parse_refresh(out), vec![UpdateInfo { name: "firefox".into(), latest_version: "131.0 (rev 4400)".into() }]);
+        assert_eq!(parse_refresh(out), vec![UpdateInfo { name: "firefox".into(), latest_version: "131.0 (rev 4400)".into(), current: None }]);
         assert!(parse_refresh("").is_empty());
         // Same version string, new revision (seen on a real snapd): still an update.
         let same = "Name   Version  Rev  Size   Publisher    Notes

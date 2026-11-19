@@ -79,7 +79,8 @@ pub(crate) fn parse_outdated(stdout: &str) -> Result<Vec<UpdateInfo>> {
         .flatten()
         .filter_map(|(k, e)| {
             let latest = e.get("latest").and_then(Value::as_str)?;
-            Some(UpdateInfo { name: k.clone(), latest_version: latest.into() })
+            let current = e.get("current").and_then(Value::as_str).map(String::from);
+            Some(UpdateInfo { name: k.clone(), latest_version: latest.into(), current })
         })
         .collect())
 }
@@ -111,7 +112,10 @@ mod tests {
     #[test]
     fn parses_outdated() {
         let u = parse_outdated(r#"{"node":{"name":"node","current":"22.1.0","latest":"22.5.0"}}"#).unwrap();
-        assert_eq!(u, vec![UpdateInfo { name: "node".into(), latest_version: "22.5.0".into() }]);
+        assert_eq!(
+            u,
+            vec![UpdateInfo { name: "node".into(), latest_version: "22.5.0".into(), current: Some("22.1.0".into()) }]
+        );
         assert!(parse_outdated("").unwrap().is_empty());
         assert!(parse_outdated("{}").unwrap().is_empty());
     }

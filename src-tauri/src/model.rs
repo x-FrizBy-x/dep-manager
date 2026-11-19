@@ -100,6 +100,9 @@ impl Package {
 pub struct UpdateInfo {
     pub name: String,
     pub latest_version: String,
+    /// Installed version this update applies to, when the manager reports it (e.g. mise with several
+    /// versions of one tool). `None` = matched by name only.
+    pub current: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

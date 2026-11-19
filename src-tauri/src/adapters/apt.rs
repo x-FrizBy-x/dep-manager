@@ -316,7 +316,7 @@ pub(crate) fn parse_upgradable(stdout: &str) -> Vec<UpdateInfo> {
         .filter_map(|l| {
             let name = l.split_whitespace().next()?.split('/').next()?;
             let latest = l.split_whitespace().nth(1)?;
-            Some(UpdateInfo { name: name.to_string(), latest_version: latest.to_string() })
+            Some(UpdateInfo { name: name.to_string(), latest_version: latest.to_string(), current: None })
         })
         .collect()
 }
@@ -396,7 +396,7 @@ mod tests {
                    curl/jammy-security,now 7.81.0-1ubuntu1.18 amd64 [upgradable from: 7.81.0-1ubuntu1.15]\n";
         let u = parse_upgradable(out);
         assert_eq!(u.len(), 2);
-        assert_eq!(u[0], UpdateInfo { name: "bash".into(), latest_version: "5.1-6ubuntu1.1".into() });
+        assert_eq!(u[0], UpdateInfo { name: "bash".into(), latest_version: "5.1-6ubuntu1.1".into(), current: None });
         assert_eq!(u[1].name, "curl");
     }
 

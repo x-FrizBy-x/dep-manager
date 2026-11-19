@@ -85,7 +85,13 @@ pub fn scan_adapter(a: &dyn Adapter, r: &dyn Runner, check_updates: bool) -> Ada
 pub fn apply_updates(packages: &mut [Package], updates: &[UpdateInfo]) -> u32 {
     let mut count = 0;
     for p in packages.iter_mut() {
-        let found = updates.iter().find(|u| u.name == p.name && Some(&u.latest_version) != p.version.as_ref());
+        // When the manager says which installed version an update is for, only that one matches
+        // (mise can have node 18 and node 22 side by side).
+        let found = updates.iter().find(|u| {
+            u.name == p.name
+                && Some(&u.latest_version) != p.version.as_ref()
+                && u.current.as_ref().is_none_or(|c| Some(c) == p.version.as_ref())
+        });
         match found {
             Some(u) => {
                 p.latest_version = Some(u.latest_version.clone());
@@ -213,12 +219,27 @@ mod tests {
         ];
         v[0].version = Some("1.0.0".into());
         v[1].version = Some("2.0.0".into());
-        let n = apply_updates(&mut v, &[UpdateInfo { name: "a".into(), latest_version: "1.1.0".into() }]);
+        let n = apply_updates(&mut v, &[UpdateInfo { name: "a".into(), latest_version: "1.1.0".into(), current: None }]);
         assert_eq!(n, 1);
         assert_eq!(v[0].update_status, UpdateStatus::Available);
         assert_eq!(v[0].latest_version.as_deref(), Some("1.1.0"));
         assert_eq!(v[1].update_status, UpdateStatus::UpToDate);
         assert_eq!(v[1].update_available, Some(false));
+    }
+
+    #[test]
+    fn update_with_current_version_only_matches_that_version() {
+        let mut v = vec![
+            Package::new("mise", "mise:node@18.0.0".into(), "node"),
+            Package::new("mise", "mise:node@22.1.0".into(), "node"),
+        ];
+        v[0].version = Some("18.0.0".into());
+        v[1].version = Some("22.1.0".into());
+        let u = UpdateInfo { name: "node".into(), latest_version: "22.5.0".into(), current: Some("22.1.0".into()) };
+        assert_eq!(apply_updates(&mut v, &[u]), 1);
+        assert_eq!(v[0].update_status, UpdateStatus::UpToDate);
+        assert_eq!(v[1].update_status, UpdateStatus::Available);
+        assert_eq!(v[1].latest_version.as_deref(), Some("22.5.0"));
     }
 
     #[test]
