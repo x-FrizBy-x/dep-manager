@@ -232,13 +232,23 @@ pub(crate) fn parse_ls(stdout: &str, root: Option<&str>) -> Result<Vec<Package>>
         Some(d) => d,
         None => return Ok(vec![]),
     };
+    /// Joins with the separator the root already uses, so Windows paths do not mix `\` and `/`
+    /// (scoped names like `@scope/pkg` contain a `/` too).
+    fn join_path(root: &str, name: &str) -> String {
+        if root.contains('\\') {
+            format!("{}\\{}", root.trim_end_matches('\\'), name.replace('/', "\\"))
+        } else {
+            format!("{}/{name}", root.trim_end_matches('/'))
+        }
+    }
+
     Ok(deps
         .iter()
         .map(|(name, e)| {
             let mut p = Package::new("npm", format!("npm:{name}"), name.as_str());
             p.version = e.get("version").and_then(Value::as_str).map(String::from);
             p.kind = PackageKind::Library;
-            p.installation_path = root.map(|r| format!("{r}/{name}"));
+            p.installation_path = root.map(|r| join_path(r, name));
             p.installation_source = e.get("resolved").and_then(Value::as_str).map(String::from);
             p.metadata.insert("scope".into(), "global".into());
             p
@@ -273,6 +283,17 @@ mod tests {
         let ts = p.iter().find(|p| p.name == "typescript").unwrap();
         assert_eq!(ts.installation_path.as_deref(), Some("/usr/lib/node_modules/typescript"));
         assert_eq!(ts.metadata["scope"], "global");
+    }
+
+    #[test]
+    fn windows_root_keeps_one_separator() {
+        let j = r#"{"dependencies":{"@qwen-code/qwen-code":{"version":"1.0.0"},"npm":{"version":"10.5.0"}}}"#;
+        let p = parse_ls(j, Some(r"C:\Users\x\AppData\Roaming\npm\node_modules")).unwrap();
+        let scoped = p.iter().find(|p| p.name == "@qwen-code/qwen-code").unwrap();
+        assert_eq!(
+            scoped.installation_path.as_deref(),
+            Some(r"C:\Users\x\AppData\Roaming\npm\node_modules\@qwen-code\qwen-code")
+        );
     }
 
     /// Real output captured from npm 12.1 on Windows 11.
