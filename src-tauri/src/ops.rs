@@ -183,6 +183,12 @@ fn strs(a: &[&str]) -> Vec<String> {
 fn build_npm(kind: OpKind, package: &str, version: Option<&str>) -> Result<Built> {
     validate_npm_name(package)?;
     let mut warnings = Vec::new();
+    if package == "npm" && kind != OpKind::Uninstall {
+        warnings.push(
+            "This replaces the npm that is running this operation and that every project uses. If it fails partway, npm may be left broken; consider running `npm install -g npm` in a terminal instead."
+                .into(),
+        );
+    }
     let args = match kind {
         OpKind::Install | OpKind::Update => {
             let target = version.unwrap_or("latest");
@@ -609,6 +615,10 @@ mod tests {
         let p = plan(OpKind::Uninstall, "typescript", None).unwrap();
         assert_eq!(p.args, vec!["uninstall", "-g", "typescript"]);
         assert!(plan(OpKind::Uninstall, "npm", None).is_err());
+        for p in [plan(OpKind::Update, "npm", None).unwrap(), plan(OpKind::Install, "npm", Some("11.0.0")).unwrap()] {
+            assert!(p.warnings.iter().any(|w| w.contains("replaces the npm")), "npm self-update must warn");
+        }
+        assert!(!plan(OpKind::Update, "typescript", None).unwrap().warnings.iter().any(|w| w.contains("replaces the npm")));
         assert!(plan_operation("x".into(), 0, "apt", OpKind::Update, "curl", None, &PlanContext::default()).is_err());
         assert!(plan(OpKind::Install, "ok", Some("--force")).is_err());
     }
