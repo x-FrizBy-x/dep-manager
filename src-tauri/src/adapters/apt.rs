@@ -73,6 +73,12 @@ impl Adapter for Apt {
 
     fn dependencies(&self, r: &dyn Runner, name: &str) -> Result<PackageDependencies> {
         validate_apt_name(name)?;
+        // `apt-cache depends` still prints a tree for known-but-uninstalled packages,
+        // so check the dpkg state first (unknown and removed names exit non-zero).
+        let status = r.run("dpkg-query", &["-W", "-f", "${db:Status-Status}", name])?;
+        if !status.success() || status.stdout.trim() != "installed" {
+            return Err(crate::error::AppError::Other(format!("`{name}` is not an installed apt package")));
+        }
         // Only hard dependencies (Depends / Pre-Depends) among INSTALLED packages.
         const HARD: [&str; 6] =
             ["--installed", "--no-recommends", "--no-suggests", "--no-conflicts", "--no-breaks", "--no-replaces"];
@@ -80,7 +86,7 @@ impl Adapter for Apt {
         fwd.extend(HARD);
         fwd.push(name);
         let closure = r.run("apt-cache", &fwd)?;
-        // An unknown or uninstalled package prints nothing on stdout.
+        // Defensive: an installed package always prints at least its own stanza.
         if closure.stdout.trim().is_empty() {
             return Err(crate::error::AppError::Other(format!("`{name}` is not an installed apt package")));
         }
@@ -372,6 +378,18 @@ mod tests {
         let r = FakeRunner::new(&["apt-cache"]);
         assert!(Apt.dependencies(&r, "bad name; rm").is_err());
         assert!(Apt.dependencies(&r, "--help").is_err());
+    }
+
+    #[test]
+    fn dependencies_reject_uninstalled_and_unknown() {
+        // Known but uninstalled (real WSL output: dpkg-query exits 1, apt-cache still prints a tree).
+        let r = FakeRunner::new(&["dpkg-query", "apt-cache", "apt-mark"])
+            .on("dpkg-query -W -f ${db:Status-Status} hello", 1, "")
+            .on("apt-cache depends --recurse --no-enhances --installed --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces hello", 0, "hello\n  Depends: libc6\n");
+        let e = Apt.dependencies(&r, "hello").unwrap_err().to_string();
+        assert!(e.contains("not an installed apt package"), "{e}");
+        let r = FakeRunner::new(&["dpkg-query"]).on("dpkg-query -W -f ${db:Status-Status} nope", 1, "");
+        assert!(Apt.dependencies(&r, "nope").is_err());
     }
 
     #[test]

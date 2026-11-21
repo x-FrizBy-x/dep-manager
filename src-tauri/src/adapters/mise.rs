@@ -31,8 +31,52 @@ impl Adapter for Mise {
 
     fn check_updates(&self, r: &dyn Runner) -> Result<Vec<UpdateInfo>> {
         let out = r.run("mise", &["outdated", "--json"])?.ok()?;
-        parse_outdated(&out.stdout)
+        let mut updates = parse_outdated(&out.stdout)?;
+        // The JSON is keyed by tool name, so with several installed versions of one tool
+        // (node 18 and 20) only one survives. Query those tools per requested version.
+        let ls = r.run("mise", &["ls", "--json"])?.ok()?;
+        for spec in multi_version_specs(&ls.stdout)? {
+            let out = r.run("mise", &["outdated", "--json", &spec])?.ok()?;
+            for u in parse_outdated(&out.stdout)? {
+                if !updates.iter().any(|e| e.name == u.name && e.current == u.current) {
+                    updates.push(u);
+                }
+            }
+        }
+        Ok(updates)
     }
+}
+
+/// `tool@requested` specs for every tool that has more than one installed version.
+pub(crate) fn multi_version_specs(ls_stdout: &str) -> Result<Vec<String>> {
+    let v: Value = serde_json::from_str(ls_stdout)?;
+    let obj = v.as_object().ok_or_else(|| AppError::Parse("mise ls: expected object".into()))?;
+    let ok = |s: &str| {
+        !s.is_empty()
+            && !s.starts_with('-')
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || "._:/+-".contains(c))
+    };
+    let mut specs = Vec::new();
+    for (tool, entries) in obj {
+        let installed: Vec<&Value> = entries
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|e| e.get("installed").and_then(Value::as_bool) != Some(false))
+            .collect();
+        if installed.len() < 2 || !ok(tool) {
+            continue;
+        }
+        for e in installed {
+            if let Some(req) = e.get("requested_version").and_then(Value::as_str).filter(|s| ok(s)) {
+                let spec = format!("{tool}@{req}");
+                if !specs.contains(&spec) {
+                    specs.push(spec);
+                }
+            }
+        }
+    }
+    Ok(specs)
 }
 
 /// `{ "node": [ { "version": "22.1.0", "install_path": "...", "source": {...}, "installed": true, "active": true } ] }`
@@ -118,5 +162,30 @@ mod tests {
         );
         assert!(parse_outdated("").unwrap().is_empty());
         assert!(parse_outdated("{}").unwrap().is_empty());
+    }
+
+    /// Shapes captured from mise 2026.11.11 (WSL) with `node = ["18", "20"]`.
+    const LS_TWO_NODES: &str = r#"{"node":[
+        {"version":"18.20.0","requested_version":"18","installed":true,"active":true},
+        {"version":"20.10.0","requested_version":"20","installed":true,"active":true}],
+        "python":[{"version":"3.12.2","requested_version":"3.12","installed":true}]}"#;
+
+    #[test]
+    fn several_versions_are_queried_per_spec() {
+        assert_eq!(multi_version_specs(LS_TWO_NODES).unwrap(), vec!["node@18", "node@20"]);
+        let r = crate::exec::fake::FakeRunner::new(&["mise"])
+            .on("mise outdated --json", 0, r#"{"node":{"name":"node","requested":"20","current":"20.10.0","latest":"20.20.2"}}"#)
+            .on("mise ls --json", 0, LS_TWO_NODES)
+            .on("mise outdated --json node@18", 0, r#"{"node":{"name":"node","requested":"18","current":"18.20.0","latest":"18.20.8"}}"#)
+            .on("mise outdated --json node@20", 0, r#"{"node":{"name":"node","requested":"20","current":"20.10.0","latest":"20.20.2"}}"#);
+        let u = Mise.check_updates(&r).unwrap();
+        let got: Vec<_> = u.iter().map(|e| (e.current.as_deref().unwrap(), e.latest_version.as_str())).collect();
+        assert_eq!(got, vec![("20.10.0", "20.20.2"), ("18.20.0", "18.20.8")]);
+    }
+
+    #[test]
+    fn spec_tokens_are_validated() {
+        let ls = r#"{"x":[{"version":"1","requested_version":"--evil","installed":true},{"version":"2","requested_version":"2","installed":true}]}"#;
+        assert_eq!(multi_version_specs(ls).unwrap(), vec!["x@2"]);
     }
 }
