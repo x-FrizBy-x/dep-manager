@@ -38,7 +38,24 @@ impl Adapter for Apt {
             .map(|o| o.stdout.lines().map(|l| l.trim().to_string()).collect())
             .unwrap_or_default();
         let have_manual = !manual.is_empty();
-        Ok(parse_dpkg(&out.stdout, &manual, have_manual))
+        let mut pkgs = parse_dpkg(&out.stdout, &manual, have_manual);
+        // Install dates are best-effort from the readable dpkg logs (oldest first so the most
+        // recent install wins). Rotated .gz logs are not read: packages installed before the
+        // oldest readable log keep a null date rather than a guessed one.
+        let mut log = String::new();
+        for path in ["/var/log/dpkg.log.1", "/var/log/dpkg.log"] {
+            if let Some(o) = r.run("cat", &[path]).ok().filter(|o| o.success()) {
+                log.push_str(&o.stdout);
+                log.push('\n');
+            }
+        }
+        let dates = parse_dpkg_log_installs(&log);
+        for p in &mut pkgs {
+            if let Some(arch) = &p.architecture {
+                p.installed_date = dates.get(&format!("{}:{arch}", p.name)).cloned();
+            }
+        }
+        Ok(pkgs)
     }
 
     fn check_updates(&self, r: &dyn Runner) -> Result<Vec<UpdateInfo>> {
@@ -287,6 +304,24 @@ pub(crate) fn parse_show(stdout: &str) -> Result<PackageDetails> {
     Ok(d)
 }
 
+/// `2026-11-09 22:21:39 install gcc-15-base:amd64 <none> 15.2.0-16ubuntu1` ->
+/// `"gcc-15-base:amd64" => "2026-11-09T22:21:39Z"`. dpkg logs in UTC (verified on Ubuntu 26.04:
+/// the log said 14:10:49 where the `.list` file mtime said 16:10:49 +0200).
+/// Only `install` lines count (not upgrades); a later install replaces an earlier one.
+pub(crate) fn parse_dpkg_log_installs(log: &str) -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    for line in log.lines() {
+        let mut it = line.split_whitespace();
+        let (Some(date), Some(time), Some("install"), Some(pkg)) = (it.next(), it.next(), it.next(), it.next()) else {
+            continue;
+        };
+        if date.len() == 10 && time.len() == 8 {
+            m.insert(pkg.to_string(), format!("{date}T{time}Z"));
+        }
+    }
+    m
+}
+
 pub(crate) fn parse_dpkg(stdout: &str, manual: &HashSet<String>, have_manual: bool) -> Vec<Package> {
     let mut pkgs = Vec::new();
     for line in stdout.lines() {
@@ -390,6 +425,32 @@ mod tests {
         assert!(e.contains("not an installed apt package"), "{e}");
         let r = FakeRunner::new(&["dpkg-query"]).on("dpkg-query -W -f ${db:Status-Status} nope", 1, "");
         assert!(Apt.dependencies(&r, "nope").is_err());
+    }
+
+    #[test]
+    fn install_dates_from_dpkg_log() {
+        let log = "2026-08-27 14:10:49 install bash:amd64 <none> 5.3-2\n\
+                   2026-08-27 14:10:50 status installed bash:amd64 5.3-2\n\
+                   2026-09-01 10:00:00 upgrade bash:amd64 5.3-2 5.3-3\n\
+                   2026-10-01 09:00:00 remove hello:amd64 2.10 <none>\n\
+                   2026-10-02 09:00:00 install hello:amd64 <none> 2.10\n\
+                   2026-11-09 22:21:39 install hello:amd64 <none> 2.10\n";
+        let m = parse_dpkg_log_installs(log);
+        assert_eq!(m["bash:amd64"], "2026-08-27T14:10:49Z"); // upgrade does not change it
+        assert_eq!(m["hello:amd64"], "2026-11-09T22:21:39Z"); // latest install wins
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn list_installed_sets_date_only_when_logged() {
+        let dpkg = "ii \tbash\t5.3\tamd64\t1\t\tshell\nii \tcurl\t8\tamd64\t1\t\tfetch\n";
+        let r = FakeRunner::new(&["dpkg-query", "apt-mark", "cat"])
+            .on(format!("dpkg-query -W -f {FMT}").trim(), 0, dpkg)
+            .on("apt-mark showmanual", 0, "bash\n")
+            .on("cat /var/log/dpkg.log", 0, "2026-08-27 14:10:49 install bash:amd64 <none> 5.3\n");
+        let p = Apt.list_installed(&r).unwrap();
+        assert_eq!(p[0].installed_date.as_deref(), Some("2026-08-27T14:10:49Z"));
+        assert_eq!(p[1].installed_date, None); // not in the log -> null, not invented
     }
 
     #[test]

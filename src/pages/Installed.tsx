@@ -25,6 +25,7 @@ function Detail({ p, onClose, ops }: { p: Pkg; onClose: () => void; ops: Operati
     ['Source', p.installationSource],
     ['Path', p.installationPath],
     ['Architecture', p.architecture],
+    ['Installed', p.installedDate],
     ['Homepage', p.homepage],
     ['License', p.license],
     ...Object.entries(p.metadata).map(([k, v]): [string, string] => [k, v]),
