@@ -74,7 +74,7 @@ function EcosystemTable({ eco }: { eco: Ecosystem }) {
             {rows.map((d) => {
               const st = eco.id === 'npm' ? npmState(d, hasModules) : null
               return (
-                <tr key={`${d.group}:${d.name}`} className="border-b">
+                <tr key={`${d.group}:${d.name}:${d.spec ?? ""}`} className="border-b">
                   <td className="px-2 py-1 break-all">{d.name}</td>
                   <td className="px-2 py-1">
                     <Badge>{d.group}</Badge>

@@ -201,31 +201,48 @@ pub(crate) fn parse_pyproject(s: &str) -> Result<Vec<ProjectDep>> {
 pub(crate) fn parse_cargo_toml(s: &str) -> Result<Vec<ProjectDep>> {
     let t: toml::Table = s.parse().map_err(|e| parse_err("Cargo.toml", e))?;
     let mut out = Vec::new();
-    for (key, group) in [("dependencies", "runtime"), ("dev-dependencies", "dev"), ("build-dependencies", "build")] {
-        if let Some(d) = t.get(key).and_then(|d| d.as_table()) {
-            for (name, v) in d {
-                let spec = match v {
-                    toml::Value::String(s) => Some(s.clone()),
-                    toml::Value::Table(t) => {
-                        if let Some(v) = t.get("version").and_then(|v| v.as_str()) {
-                            Some(v.to_string())
-                        } else if let Some(p) = t.get("path").and_then(|v| v.as_str()) {
-                            Some(format!("path {p}"))
-                        } else if let Some(g) = t.get("git").and_then(|v| v.as_str()) {
-                            Some(format!("git {g}"))
-                        } else if t.get("workspace").and_then(|v| v.as_bool()) == Some(true) {
-                            Some("workspace".to_string())
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                };
-                out.push(dep(name, spec, group));
+    collect_cargo_tables(&t, None, &mut out);
+    // Platform-specific tables: `[target.'cfg(unix)'.dependencies]` etc. Listed with the
+    // platform in the declared column instead of being left out.
+    if let Some(targets) = t.get("target").and_then(|d| d.as_table()) {
+        for (cfg, v) in targets {
+            if let Some(tt) = v.as_table() {
+                collect_cargo_tables(tt, Some(cfg), &mut out);
             }
         }
     }
     Ok(out)
+}
+
+fn collect_cargo_tables(t: &toml::Table, target: Option<&str>, out: &mut Vec<ProjectDep>) {
+    for (key, group) in [("dependencies", "runtime"), ("dev-dependencies", "dev"), ("build-dependencies", "build")] {
+        let Some(d) = t.get(key).and_then(|d| d.as_table()) else { continue };
+        for (name, v) in d {
+            let spec = match v {
+                toml::Value::String(s) => Some(s.clone()),
+                toml::Value::Table(t) => {
+                    if let Some(v) = t.get("version").and_then(|v| v.as_str()) {
+                        Some(v.to_string())
+                    } else if let Some(p) = t.get("path").and_then(|v| v.as_str()) {
+                        Some(format!("path {p}"))
+                    } else if let Some(g) = t.get("git").and_then(|v| v.as_str()) {
+                        Some(format!("git {g}"))
+                    } else if t.get("workspace").and_then(|v| v.as_bool()) == Some(true) {
+                        Some("workspace".to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let spec = match (target, spec) {
+                (Some(cfg), Some(s)) => Some(format!("{s} ({cfg})")),
+                (Some(cfg), None) => Some(format!("({cfg})")),
+                (None, s) => s,
+            };
+            out.push(dep(name, spec, group));
+        }
+    }
 }
 
 /// Resolved versions from `Cargo.lock`. A crate locked at several versions is left out
@@ -463,6 +480,26 @@ mod tests {
         );
         assert_eq!(d[4].spec.as_deref(), Some("^5"));
         assert!(parse_pyproject("[[").is_err());
+    }
+
+    #[test]
+    fn cargo_target_specific_dependencies_are_listed_with_their_platform() {
+        let d = parse_cargo_toml(
+            "[dependencies]\nserde=\"1\"\n[target.'cfg(unix)'.dependencies]\nlibc=\"0.2\"\n\
+             [target.'cfg(windows)'.dependencies]\nwindows-sys={version=\"0.61\"}\n\
+             [target.'cfg(windows)'.build-dependencies]\nembed={path=\"../e\"}\n",
+        )
+        .unwrap();
+        let got: Vec<_> = d.iter().map(|x| (x.name.as_str(), x.group.as_str(), x.spec.as_deref().unwrap())).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("serde", "runtime", "1"),
+                ("libc", "runtime", "0.2 (cfg(unix))"),
+                ("windows-sys", "runtime", "0.61 (cfg(windows))"),
+                ("embed", "build", "path ../e (cfg(windows))"),
+            ]
+        );
     }
 
     #[test]
