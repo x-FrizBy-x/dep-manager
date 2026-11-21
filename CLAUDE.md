@@ -7,19 +7,23 @@ UniManage: safety-first unified manager over existing package managers (Tauri 2 
 - `npm test` (Vitest); `npm run test:rust` (or `cargo test --lib` in `src-tauri`); `npm run typecheck`; `npm run lint` (oxlint; one known warning in `hooks/useInventory.ts`)
 - Real-system smoke test (read-only, ignored by default): `cargo test --manifest-path src-tauri/Cargo.toml --test real_system -- --ignored --nocapture`; used on Linux/WSL to run the real adapters
 - Elevated apt test (run as root so pkexec needs no dialog): `wsl -u root`, `real_ops apt_install --ignored`; needs the `pkexec` package
+- Real polkit test (WSL, needs a polkit agent: run `lxpolkit` inside `wsl -u root -- su -l alex -c "bash script.sh"`, see HANDOFF.md): `real_ops --ignored` with `UNIMANAGE_POLKIT_TEST=1` (install/remove `hello`) or `UNIMANAGE_POLKIT_FAIL_TEST=1` (cancel/wrong password)
 - Real write test (installs/uninstalls a throwaway pipx and Flatpak package, per-user): `cargo test --manifest-path src-tauri/Cargo.toml --test real_ops -- --ignored --nocapture --test-threads=1`
 - UI driving: `node scripts/ui-check.mjs <shot.png> [text to click ...]` (Playwright over CDP; start app with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`)
 
 ## Layout
-- `src-tauri/src`: `adapters/` (one per manager: apt, flatpak, snap, mise, npm, pnpm, pipx, uv; Adapter trait with list/update check/search/details/dependencies, defaults = Unsupported), `scanner.rs`, `ops.rs` (plan/validate/execute operations), `exec.rs` (streaming runner, process-tree kill), `commands.rs` (Tauri commands), `db.rs` (SQLite + migrations), `model.rs`.
-- `src`: `pages/` (Overview, Installed, Updates, Explorer, Dependencies, History), `components/OperationUI.tsx`, `hooks/`, `lib/` (api, types, severity, operations).
+- `src-tauri/src`: `adapters/` (one per manager: apt, flatpak, snap, mise, npm, pnpm, pipx, uv; Adapter trait with list/update check/search/details/dependencies, defaults = Unsupported), `scanner.rs`, `ops.rs` (plan/validate/execute operations), `exec.rs` (streaming runner, process-tree kill), `commands.rs` (Tauri commands), `db.rs` (SQLite + migrations), `model.rs`, `manifest.rs` (environment backup snapshot + diff, pure functions), `project.rs` (read-only project dependency parsing: package.json, requirements.txt, pyproject.toml, Cargo.toml; never runs commands), `settings.rs` (validated key/value settings, defaults on bad values).
+- `src`: `pages/` (Overview, Installed, Updates, Explorer, Dependencies, Projects, Backup, Settings, History), `components/OperationUI.tsx`, `hooks/`, `lib/` (api, types, severity, operations, inventory).
+- `.github/workflows`: `ci.yml`; `release.yml` (tag `vX.Y.Z` builds deb + AppImage + SHA256SUMS; releases are pre-releases). Version lives in tauri.conf, Cargo.toml/lock, package.json/lock; bump all together.
 
 ## Rules (do not break)
 - Never pretend support; use null rather than invented values.
 - No shell: argv arrays only; strictly validate every user-supplied token (matters on Windows because `npm` is `npm.cmd`).
 - Nothing modifies the system without preview -> explicit confirmation -> execute; one operation at a time, never during a scan; log everything.
 - Privileges: the only escalation is `/usr/bin/pkexec` (polkit shows its own dialog) for apt/snap, built in `ops.rs` (`ELEVATOR`). UniManage never sees, asks for or stores a password, never uses sudo, and elevated operations are not cancellable (a root child can't be killed safely). No auto-removal of dependencies, no "update all", nothing merged across managers by name alone.
-- Tests must not alter the user's global npm packages beyond throwaway ones that are uninstalled afterwards.
+- Tests must not alter the user's global npm packages beyond throwaway ones that are uninstalled afterwards. Never test installing/updating `npm` itself (plan only warns; uninstalling `npm` is refused).
+- Project dependencies stay separate from the global inventory; manifests/backups never remove anything to "match".
+- Always ask before installing things in environments the user didn't mention (e.g. WSL).
 
 ## Gotchas
 - Disk space: Windows target dir (~8 GB) plus a Linux copy in WSL (~6 GB) plus Flatpak runtimes can fill C:. In session 3 C: hit 0 bytes free, the WSL ext4 went read-only (emergency_ro) and Ubuntu would not start until space was freed and `wsl --shutdown` was run. Check `Get-PSDrive C` before big builds; `cargo clean` is always safe.
