@@ -4,7 +4,7 @@ UniManage: safety-first unified manager over existing package managers (Tauri 2 
 
 ## Commands
 - `npm install`; `npm run tauri dev` (desktop app); `npm run build` (tsc -b + vite)
-- `npm test` (Vitest); `npm run test:rust` (or `cargo test --lib` in `src-tauri`); `npm run typecheck`; `npm run lint` (oxlint; one known warning in `hooks/useInventory.ts`)
+- `npm test` (Vitest); `npm run test:e2e` (Playwright, browser-only UI tests with a fake Tauri backend in `e2e/backend.ts`; needs `npx playwright install chromium` once; no real package manager is touched); `npm run test:rust` (or `cargo test --lib` in `src-tauri`); `npm run typecheck`; `npm run lint` (oxlint; one known warning in `hooks/useInventory.ts`)
 - Real-system smoke test (read-only, ignored by default): `cargo test --manifest-path src-tauri/Cargo.toml --test real_system -- --ignored --nocapture`; used on Linux/WSL to run the real adapters
 - Elevated apt test (run as root so pkexec needs no dialog): `wsl -u root`, `real_ops apt_install --ignored`; needs the `pkexec` package
 - Real polkit test (WSL, needs a polkit agent: run `lxpolkit` inside `wsl -u root -- su -l alex -c "bash script.sh"`, see HANDOFF.md): `real_ops --ignored` with `UNIMANAGE_POLKIT_TEST=1` (install/remove `hello`) or `UNIMANAGE_POLKIT_FAIL_TEST=1` (cancel/wrong password)

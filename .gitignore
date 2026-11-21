@@ -34,3 +34,7 @@ HANDOFF.md
 
 # Local Claude Code settings
 .claude/
+
+# Playwright
+test-results/
+playwright-report/
