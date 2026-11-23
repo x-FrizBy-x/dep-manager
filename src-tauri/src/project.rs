@@ -245,6 +245,30 @@ fn collect_cargo_tables(t: &toml::Table, target: Option<&str>, out: &mut Vec<Pro
     }
 }
 
+/// Notes about parts of Cargo.toml that are not listed: workspace members and
+/// `[patch]`/`[replace]` overrides. Reported, never merged into the table.
+pub(crate) fn cargo_extra_notes(s: &str) -> Vec<String> {
+    let Ok(t) = s.parse::<toml::Table>() else { return Vec::new() };
+    let mut notes = Vec::new();
+    if let Some(ws) = t.get("workspace").and_then(|w| w.as_table()) {
+        let members: Vec<&str> = ws.get("members").and_then(|m| m.as_array()).into_iter().flatten().filter_map(|m| m.as_str()).collect();
+        if !members.is_empty() {
+            let shown: Vec<&str> = members.iter().copied().take(10).collect();
+            let more = if members.len() > shown.len() { format!(" and {} more", members.len() - shown.len()) } else { String::new() };
+            notes.push(format!(
+                "Workspace members are not scanned; point at a member folder to see its dependencies: {}{more}",
+                shown.join(", ")
+            ));
+        }
+    }
+    for key in ["patch", "replace"] {
+        if t.get(key).is_some() {
+            notes.push(format!("[{key}] overrides exist in Cargo.toml and are not listed"));
+        }
+    }
+    notes
+}
+
 /// Resolved versions from `Cargo.lock`. A crate locked at several versions is left out
 /// rather than guessed.
 pub(crate) fn parse_cargo_lock(s: &str) -> Result<HashMap<String, String>> {
@@ -386,8 +410,12 @@ fn scan_cargo(dir: &Path) -> Option<Ecosystem> {
         notes: Vec::new(),
         error: None,
     };
-    match read_capped(&dir.join("Cargo.toml")).and_then(|s| parse_cargo_toml(&s)) {
-        Ok(d) => e.dependencies = d,
+    let mut extra = Vec::new();
+    match read_capped(&dir.join("Cargo.toml")).and_then(|s| parse_cargo_toml(&s).map(|d| (d, cargo_extra_notes(&s)))) {
+        Ok((d, n)) => {
+            e.dependencies = d;
+            extra = n;
+        }
         Err(err) => {
             e.error = Some(err.to_string());
             return Some(e);
@@ -407,7 +435,7 @@ fn scan_cargo(dir: &Path) -> Option<Ecosystem> {
     } else {
         e.notes.push("no Cargo.lock: resolved versions are unknown".into());
     }
-    e.notes.push("Workspace members in sub-folders are not scanned; point at a member folder to see its dependencies".into());
+    e.notes.extend(extra);
     Some(e)
 }
 
@@ -500,6 +528,15 @@ mod tests {
                 ("embed", "build", "path ../e (cfg(windows))"),
             ]
         );
+    }
+
+    #[test]
+    fn cargo_workspace_members_and_overrides_are_noted() {
+        let n = cargo_extra_notes("[workspace]\nmembers=[\"a\",\"crates/*\"]\n[patch.crates-io]\nfoo={path=\"../foo\"}\n");
+        assert_eq!(n.len(), 2);
+        assert!(n[0].contains("a, crates/*"));
+        assert!(n[1].contains("[patch]"));
+        assert!(cargo_extra_notes("[dependencies]\nserde=\"1\"\n").is_empty());
     }
 
     #[test]
