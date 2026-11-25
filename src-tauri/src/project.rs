@@ -269,6 +269,24 @@ pub(crate) fn cargo_extra_notes(s: &str) -> Vec<String> {
     notes
 }
 
+/// Note about npm `workspaces` (array form or `{ "packages": [...] }`): members are not
+/// scanned or merged. Reported only.
+pub(crate) fn npm_workspace_notes(s: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(s) else { return Vec::new() };
+    let ws = v.get("workspaces");
+    let list = ws.and_then(|w| w.as_array().or_else(|| w.get("packages").and_then(|p| p.as_array())));
+    let members: Vec<&str> = list.into_iter().flatten().filter_map(|m| m.as_str()).collect();
+    if members.is_empty() {
+        return Vec::new();
+    }
+    let shown: Vec<&str> = members.iter().copied().take(10).collect();
+    let more = if members.len() > shown.len() { format!(" and {} more", members.len() - shown.len()) } else { String::new() };
+    vec![format!(
+        "Workspace members are not scanned; point at a member folder to see its dependencies: {}{more}",
+        shown.join(", ")
+    )]
+}
+
 /// Resolved versions from `Cargo.lock`. A crate locked at several versions is left out
 /// rather than guessed.
 pub(crate) fn parse_cargo_lock(s: &str) -> Result<HashMap<String, String>> {
@@ -319,8 +337,11 @@ fn scan_npm(dir: &Path) -> Option<Ecosystem> {
         notes: Vec::new(),
         error: None,
     };
-    match read_capped(&dir.join("package.json")).and_then(|s| parse_package_json(&s)) {
-        Ok(d) => e.dependencies = d,
+    match read_capped(&dir.join("package.json")).and_then(|s| parse_package_json(&s).map(|d| (d, npm_workspace_notes(&s)))) {
+        Ok((d, extra)) => {
+            e.dependencies = d;
+            e.notes.extend(extra);
+        }
         Err(err) => {
             e.error = Some(err.to_string());
             return Some(e);
@@ -528,6 +549,17 @@ mod tests {
                 ("embed", "build", "path ../e (cfg(windows))"),
             ]
         );
+    }
+
+    #[test]
+    fn npm_workspaces_are_noted() {
+        let n = npm_workspace_notes(r#"{"workspaces":["packages/*","tools/a"]}"#);
+        assert_eq!(n.len(), 1);
+        assert!(n[0].contains("packages/*, tools/a"));
+        let n = npm_workspace_notes(r#"{"workspaces":{"packages":["apps/*"]}}"#);
+        assert!(n[0].contains("apps/*"));
+        assert!(npm_workspace_notes(r#"{"dependencies":{"a":"1"}}"#).is_empty());
+        assert!(npm_workspace_notes(r#"{"workspaces":[]}"#).is_empty());
     }
 
     #[test]
